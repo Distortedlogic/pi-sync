@@ -12,6 +12,7 @@ const ScopeSchema = Type.Array(Type.String({ minLength: 1 }), { uniqueItems: tru
 
 export const FileFingerprintSchema = Type.Object(
 	{
+		comparisonSha256: Sha256Schema,
 		executable: Type.Boolean(),
 		sha256: Sha256Schema,
 	},

@@ -43,7 +43,7 @@ function state(deviceId: string): StateDocument {
 		baseline: {
 			commit: BASELINE_COMMIT,
 			files: {
-				"settings.json": { executable: false, sha256: "b".repeat(64) },
+				"settings.json": { comparisonSha256: "b".repeat(64), executable: false, sha256: "b".repeat(64) },
 			},
 		},
 		deviceId,
