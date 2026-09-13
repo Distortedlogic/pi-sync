@@ -145,24 +145,26 @@ const BACKUP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 type ActionPhase = "shared" | "machine" | "packages" | "state";
 
-function actionPhase(action: Readonly<PlanArtifact["actions"][number]>): ActionPhase {
+function actionPhase(action: Readonly<PlanArtifact["actions"][number]>, plan: Readonly<PlanArtifact>): ActionPhase {
 	if (action.risk === "conflict" || action.direction === "none") {
 		throw new TransactionPlanExpiredError();
 	}
 	if (action.risk === "policy" || action.direction === "baseline-only") return "state";
-	if (action.codeExecution) return "packages";
+	if (action.codeExecution || (action.path === "settings.json" && plan.actions.some((entry) => entry.codeExecution))) {
+		return "packages";
+	}
 	if (action.direction === "machine-to-shared") return "shared";
 	if (action.direction === "shared-to-machine" && action.destination === "THIS MACHINE") return "machine";
 	throw new TransactionPlanExpiredError();
 }
 
 function actionIdsForPhase(plan: Readonly<PlanArtifact>, phase: ActionPhase): string[] {
-	return plan.actions.filter((action) => actionPhase(action) === phase).map(planActionId);
+	return plan.actions.filter((action) => actionPhase(action, plan) === phase).map(planActionId);
 }
 
 function allActionIds(plan: Readonly<PlanArtifact>): string[] {
 	const ids = plan.actions.map((action) => {
-		actionPhase(action);
+		actionPhase(action, plan);
 		return planActionId(action);
 	});
 	if (new Set(ids).size !== ids.length) throw new TransactionPlanExpiredError();

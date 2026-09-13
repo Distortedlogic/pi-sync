@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -343,6 +344,39 @@ export async function inspectSetupRepository(options: {
 		sharedCommit,
 		workspace,
 	});
+}
+
+export async function withSharedSnapshotWorktree<T>(options: {
+	exec: GitExec;
+	snapshot: Readonly<SharedSnapshot>;
+	run(directory: string): Promise<T>;
+	signal?: AbortSignal;
+}): Promise<T> {
+	const directory = resolve(
+		dirname(options.snapshot.workspace.repositoryDirectory),
+		"candidates",
+		`snapshot-${options.snapshot.sharedCommit}-${randomUUID()}`,
+	);
+	if (await pathDetails(directory)) {
+		throw new GitOperationError("The exact SHARED REPOSITORY snapshot workspace already exists.");
+	}
+	await executeGit(
+		options.exec,
+		options.snapshot.workspace,
+		["worktree", "add", "--detach", directory, options.snapshot.sharedCommit],
+		"SHARED REPOSITORY snapshot worktree creation",
+		{ signal: options.signal },
+	);
+	try {
+		return await options.run(directory);
+	} finally {
+		await executeGit(
+			options.exec,
+			options.snapshot.workspace,
+			["worktree", "remove", directory],
+			"SHARED REPOSITORY snapshot worktree cleanup",
+		);
+	}
 }
 
 export async function fetchSharedSnapshot(options: {

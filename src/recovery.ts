@@ -188,7 +188,9 @@ function sameFile(left: Readonly<InventoryFile> | undefined, right: Readonly<Inv
 }
 
 function createRestorePlanId(data: Omit<RestorePlan, "planId" | "shortPlanId">): string {
-	const canonical = stableStringify(data);
+	const securityData: Record<string, unknown> = { ...data };
+	delete securityData.createdAt;
+	const canonical = stableStringify(securityData);
 	if (canonical === undefined) throw new Error("Cannot create the restore plan ID.");
 	return createHash("sha256").update(canonical).digest("hex");
 }

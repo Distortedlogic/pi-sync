@@ -118,6 +118,13 @@ describe("backup restore", () => {
 				"WRITE ON THIS MACHINE:a.txt",
 				"DELETE FROM THIS MACHINE:b.txt",
 			]);
+			const nextInvocationPlan = await buildRestorePlan({
+				agentDirectory,
+				machineRoot,
+				backupId: metadata.backupId,
+				createdAt: "2026-01-03T00:00:00.000Z",
+			});
+			expect(nextInvocationPlan.planId).toBe(plan.planId);
 			expect(() => authorizeRestorePlan(plan, plan.shortPlanId)).toThrow("Exact restore plan ID");
 			const select = vi.fn(async () => "Enter exact restore plan ID");
 			const input = vi.fn(async () => plan.planId);

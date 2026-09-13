@@ -2,9 +2,20 @@
 
 `pi-config-sync` will synchronize Pi configuration between **THIS MACHINE** and a **SHARED REPOSITORY**.
 
-## Current command
+## Command
 
-The package registers `/config-sync`. Work Unit 10 can execute exact confirmed package actions and then write the exact planned `settings.json` on THIS MACHINE.
+The package registers `/config-sync` with these actions:
+
+- `status`
+- `publish [exact-plan-id]`
+- `apply [exact-plan-id]`
+- `reconcile [exact-plan-id]`
+- `diff [path]`
+- `recover`
+- `restore [backup-id] [exact-restore-plan-id]`
+- `doctor`
+
+TUI and RPC modes can show review dialogs. JSON and print modes return read-only plan metadata unless the command includes an exact stored plan ID. A completed APPLY offers Pi resource reload only when loaded resources changed.
 
 ## Data location
 

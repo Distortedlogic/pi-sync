@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAndLoadExtensions, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
+import { CONFIG_SYNC_SUBCOMMANDS } from "../src/commands.ts";
 import { RECOVERY_CHOICES } from "../src/recovery.ts";
 import { loadJournal, saveJournal } from "../src/state.ts";
 import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from "./helpers.ts";
@@ -18,7 +19,10 @@ describe("pi-config-sync foundation", () => {
 
 			expect(result.errors).toEqual([]);
 			expect(result.extensions).toHaveLength(1);
-			expect(result.extensions[0]?.commands.has("config-sync")).toBe(true);
+			const command = result.extensions[0]?.commands.get("config-sync");
+			expect(command).toBeDefined();
+			const completions = await command?.getArgumentCompletions?.("");
+			expect(completions?.map((item) => item.value)).toEqual(CONFIG_SYNC_SUBCOMMANDS);
 		} finally {
 			await agentDirectory.cleanup();
 		}
@@ -28,9 +32,10 @@ describe("pi-config-sync foundation", () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 		const notify = vi.fn();
 		const select = vi.fn(async () => RECOVERY_CHOICES[2].label);
+		const setStatus = vi.fn();
 		const ctx = {
 			hasUI: true,
-			ui: { notify, select } as unknown as ExtensionCommandContext["ui"],
+			ui: { notify, select, setStatus } as unknown as ExtensionCommandContext["ui"],
 		} as ExtensionCommandContext;
 		try {
 			vi.stubEnv("PI_CODING_AGENT_DIR", agentDirectory.path);

@@ -260,10 +260,15 @@ describe("plan review", () => {
 		expect(input).toHaveBeenCalledWith("Enter exact plan ID", rebuilt?.planId);
 	});
 
-	it("returns the plan only in non-interactive modes", async () => {
+	it.each(["print", "json"] as const)("returns the plan only in %s mode", async (mode) => {
 		const rebuild = vi.fn();
 		const previewPlan = plan();
-		const result = await reviewSyncPlan({ ctx: context(), previewPlan, decisionRequirements: requirements, rebuild });
+		const result = await reviewSyncPlan({
+			ctx: context({ mode }),
+			previewPlan,
+			decisionRequirements: requirements,
+			rebuild,
+		});
 		expect(result).toEqual({ status: "plan_only", plan: previewPlan, text: formatPlanText(previewPlan, "final-plan") });
 		expect(rebuild).not.toHaveBeenCalled();
 	});

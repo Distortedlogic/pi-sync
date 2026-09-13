@@ -30,6 +30,8 @@ export interface DecisionRequirement {
 	choices: readonly { id: string; label: string }[];
 	exactSource?: string;
 	normalizedSource?: string;
+	previousExactSource?: string;
+	previousNormalizedSource?: string;
 }
 
 export interface CollectedDecision {
@@ -38,6 +40,8 @@ export interface CollectedDecision {
 	choice: string;
 	exactSource?: string;
 	normalizedSource?: string;
+	previousExactSource?: string;
+	previousNormalizedSource?: string;
 }
 
 export interface PlanExecutionAuthorization {
@@ -159,6 +163,10 @@ async function collectDecisions(
 				choice: choice.id,
 				...(requirement.exactSource ? { exactSource: requirement.exactSource } : {}),
 				...(requirement.normalizedSource ? { normalizedSource: requirement.normalizedSource } : {}),
+				...(requirement.previousExactSource ? { previousExactSource: requirement.previousExactSource } : {}),
+				...(requirement.previousNormalizedSource
+					? { previousNormalizedSource: requirement.previousNormalizedSource }
+					: {}),
 			}),
 		);
 	}

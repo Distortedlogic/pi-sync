@@ -17,6 +17,7 @@ export type MachineApplyOperation =
 export interface MachineApplySet {
 	planId: string;
 	operations: readonly Readonly<MachineApplyOperation>[];
+	deferredPaths: readonly string[];
 	finalTree: Readonly<Record<string, Readonly<InventoryFile>>>;
 }
 
@@ -135,12 +136,14 @@ export function buildMachineApplySet(options: {
 	currentMachineTree: Readonly<Record<string, Readonly<InventoryFile>>>;
 	committedFinalMachineTree: Readonly<Record<string, Readonly<InventoryFile>>>;
 	baseline: Baseline | null;
+	deferredPaths?: readonly string[];
 }): Readonly<MachineApplySet> {
 	if (options.authorization.planId !== options.plan.planId) {
 		throw new MachineApplyError("Execution authorization does not match the confirmed plan.");
 	}
 	assertFinalTreeMatchesPlan(options.plan.finalMachineTree, options.committedFinalMachineTree);
 	const operations: Readonly<MachineApplyOperation>[] = [];
+	const deferredPaths = new Set(options.deferredPaths ?? []);
 	const paths = [
 		...new Set([...Object.keys(options.currentMachineTree), ...Object.keys(options.committedFinalMachineTree)]),
 	].sort();
@@ -172,6 +175,7 @@ export function buildMachineApplySet(options: {
 	return Object.freeze({
 		planId: options.plan.planId,
 		operations: Object.freeze(operations),
+		deferredPaths: Object.freeze([...deferredPaths]),
 		finalTree: Object.freeze({ ...options.committedFinalMachineTree }),
 	});
 }
@@ -454,7 +458,7 @@ export async function restoreVerifiedMachineBackup(options: {
 	};
 }
 
-export async function applyMachinePlan(options: {
+export async function createVerifiedMachineBackup(options: {
 	agentDirectory: string;
 	machineRoot: string;
 	backupId: string;
@@ -462,12 +466,11 @@ export async function applyMachinePlan(options: {
 	applySet: Readonly<MachineApplySet>;
 	operations?: MachineApplyOperations;
 	signal?: AbortSignal;
-}): Promise<MachineApplySuccess> {
+}): Promise<BackupMetadata> {
 	const operations = options.operations ?? createMachineApplyOperations();
-	let metadata: BackupMetadata;
 	try {
-		metadata = await createBackup({ ...options, operations });
-		await verifyBackup({
+		const metadata = await createBackup({ ...options, operations });
+		return await verifyBackup({
 			agentDirectory: options.agentDirectory,
 			backupId: options.backupId,
 			expectedMetadata: metadata,
@@ -479,10 +482,30 @@ export async function applyMachinePlan(options: {
 			cause: error,
 		});
 	}
+}
 
+export async function applyMachineFilesFromBackup(options: {
+	agentDirectory: string;
+	machineRoot: string;
+	backupId: string;
+	applySet: Readonly<MachineApplySet>;
+	operations?: MachineApplyOperations;
+	signal?: AbortSignal;
+	verifyFinal?: boolean;
+}): Promise<MachineApplySuccess> {
+	const operations = options.operations ?? createMachineApplyOperations();
+	const metadata = await verifyBackup({
+		agentDirectory: options.agentDirectory,
+		backupId: options.backupId,
+		operations,
+	});
+	if (metadata.planId !== options.applySet.planId) {
+		throw new MachineApplyError("Backup does not match the confirmed machine plan.", { backupId: options.backupId });
+	}
 	try {
 		for (const operation of options.applySet.operations) {
 			options.signal?.throwIfAborted();
+			if (options.applySet.deferredPaths.includes(operation.path)) continue;
 			if (operation.kind === "write") {
 				await writeMachineFile(operations, options.machineRoot, operation.path, operation.final);
 			} else {
@@ -490,7 +513,9 @@ export async function applyMachinePlan(options: {
 			}
 			options.signal?.throwIfAborted();
 		}
-		await verifyMachineTree({ operations, machineRoot: options.machineRoot, applySet: options.applySet });
+		if (options.verifyFinal) {
+			await verifyMachineTree({ operations, machineRoot: options.machineRoot, applySet: options.applySet });
+		}
 	} catch (error) {
 		const manualRecoveryPaths = await restoreBackup({
 			agentDirectory: options.agentDirectory,
@@ -517,6 +542,31 @@ export async function applyMachinePlan(options: {
 		backupId: options.backupId,
 		appliedPaths: Object.freeze(options.applySet.operations.map((operation) => operation.path)),
 	};
+}
+
+export async function verifyMachineApplySet(options: {
+	machineRoot: string;
+	applySet: Readonly<MachineApplySet>;
+	operations?: MachineApplyOperations;
+}): Promise<void> {
+	await verifyMachineTree({
+		operations: options.operations ?? createMachineApplyOperations(),
+		machineRoot: options.machineRoot,
+		applySet: options.applySet,
+	});
+}
+
+export async function applyMachinePlan(options: {
+	agentDirectory: string;
+	machineRoot: string;
+	backupId: string;
+	createdAt: string;
+	applySet: Readonly<MachineApplySet>;
+	operations?: MachineApplyOperations;
+	signal?: AbortSignal;
+}): Promise<MachineApplySuccess> {
+	await createVerifiedMachineBackup(options);
+	return applyMachineFilesFromBackup({ ...options, verifyFinal: true });
 }
 
 export async function cleanupMachineBackups(options: {
