@@ -4,7 +4,7 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 03 does not permit PUBLISH or APPLY operations. The command makes no configuration change.
+The package registers `/config-sync`. Work Unit 04 does not execute PUBLISH or APPLY operations. The command makes no configuration change.
 
 ## Data location
 
@@ -13,6 +13,8 @@ Configuration sync data is stored under `$PI_CODING_AGENT_DIR/.config-sync/`. Co
 The default managed scope includes Pi settings, keybindings, instructions, extensions, skills, prompts, and themes. It excludes `models.json`. Permanent deny rules exclude credentials, environment files, sessions, installed package data, Git data, and configuration sync state.
 
 File inventory rejects symlinks, special files, nested repositories, unsafe paths, path collisions, unreadable managed files, and configured size-limit failures. It hashes exact bytes. It also keeps exact `settings.json` bytes while it uses stable JSON for comparison.
+
+The pure three-way planner classifies machine, shared, and baseline values. It produces fixed-direction actions, blocks modes that require the opposite direction, sorts actions by risk and path, and computes exact final trees without file, Git, network, UI, or time access.
 
 ## Runtime dependency decisions
 
