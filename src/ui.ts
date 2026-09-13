@@ -118,16 +118,19 @@ export function formatPlanRows(
 	return Object.freeze(rows.map((row) => Object.freeze(row)));
 }
 
+export function formatFixedSections(rows: readonly Readonly<FormattedPlanRow>[]): string {
+	return PLAN_SECTIONS.map((section) => {
+		const content = rows.filter((row) => row.section === section).map((row) => `- ${row.text}`);
+		return `## ${section}\n${content.length > 0 ? content.join("\n") : "- (none)"}`;
+	}).join("\n\n");
+}
+
 export function formatPlanText(
 	plan: Readonly<PlanArtifact>,
 	view: PlanView,
 	completedActionIds?: ReadonlySet<string>,
 ): string {
-	const rows = formatPlanRows(plan, view, completedActionIds);
-	return PLAN_SECTIONS.map((section) => {
-		const content = rows.filter((row) => row.section === section).map((row) => `- ${row.text}`);
-		return `## ${section}\n${content.join("\n")}`;
-	}).join("\n\n");
+	return formatFixedSections(formatPlanRows(plan, view, completedActionIds));
 }
 
 export function authorizePlanExecution(

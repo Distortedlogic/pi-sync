@@ -5,7 +5,8 @@ import writeFileAtomic from "write-file-atomic";
 import { createDefaultLocalPolicy, ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
 import { type InventoryFile, resolveManagedPath } from "./files.ts";
 import { type CandidateSecurityOptions, validateStagedCandidate } from "./security.ts";
-import type { RepositoryConfig } from "./types.ts";
+import { validateArtifact } from "./state.ts";
+import { type RepositoryConfig, type SharedManifest, SharedManifestSchema } from "./types.ts";
 
 export type GitExec = ExtensionAPI["exec"];
 
@@ -30,6 +31,16 @@ export interface GitDoctorResult {
 export type FetchSharedSnapshotResult =
 	| { status: "ready"; snapshot: Readonly<SharedSnapshot> }
 	| { status: "doctor"; doctor: Readonly<GitDoctorResult> };
+
+export const SHARED_MANIFEST_PATH = "pi-config-sync.json";
+
+export interface SetupRepositoryInspection {
+	empty: boolean;
+	manifest: Readonly<SharedManifest> | null;
+	privacyNotice: "SHARED REPOSITORY privacy could not be verified.";
+	sharedCommit: string | null;
+	workspace: Readonly<GitWorkspace>;
+}
 
 export interface CandidateCommit {
 	planId: string;
@@ -232,6 +243,106 @@ async function fetchBranchCommit(
 	const commit = result.stdout.trim();
 	validateCommit(commit, "Fetched SHARED REPOSITORY commit");
 	return commit;
+}
+
+export async function inspectSetupRepository(options: {
+	exec: GitExec;
+	agentDirectory: string;
+	repository: RepositoryConfig;
+	signal?: AbortSignal;
+}): Promise<Readonly<SetupRepositoryInspection>> {
+	validateBranch(options.repository.branch);
+	const paths = await ensureConfigSyncDirectories(options.agentDirectory);
+	const workspace = workspaceFor(options.agentDirectory, options.repository.branch);
+	const existing = await pathDetails(workspace.repositoryDirectory);
+	if (!existing) {
+		await mkdir(workspace.repositoryDirectory, { recursive: true });
+		await executeGit(options.exec, workspace, ["init"], "Extension-owned Git initialization", {
+			signal: options.signal,
+		});
+		await executeGit(
+			options.exec,
+			workspace,
+			["remote", "add", "origin", options.repository.repositoryPath],
+			"SHARED REPOSITORY origin setup",
+			{ signal: options.signal },
+		);
+	} else {
+		if (!existing.isDirectory() || existing.isSymbolicLink()) {
+			throw new GitOperationError("The existing extension-owned Git path will not be deleted or replaced.");
+		}
+		const doctor = await inspectWorkspace(options.exec, workspace, options.repository.repositoryPath, options.signal);
+		if (doctor) throw new GitOperationError(`${doctor.message} The existing clone was not changed.`);
+	}
+	await mkdir(paths.hooksDirectory, { recursive: true });
+	const refs = await executeGit(options.exec, workspace, ["ls-remote", "origin"], "SHARED REPOSITORY access check", {
+		signal: options.signal,
+		allowFailure: true,
+	});
+	if (refs.code !== 0) throw new GitOperationError("SHARED REPOSITORY access verification failed.");
+	const remoteRefs = refs.stdout
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/, 2))
+		.filter((entry): entry is [string, string] => entry.length === 2);
+	const branchRef = `refs/heads/${options.repository.branch}`;
+	const branchEntry = remoteRefs.find(([, ref]) => ref === branchRef);
+	if (remoteRefs.length === 0) {
+		return Object.freeze({
+			empty: true,
+			manifest: null,
+			privacyNotice: "SHARED REPOSITORY privacy could not be verified.",
+			sharedCommit: null,
+			workspace,
+		});
+	}
+	if (!branchEntry) {
+		throw new GitOperationError("SHARED REPOSITORY is not empty and its configured branch has no valid manifest.");
+	}
+	const sharedCommit = branchEntry[0];
+	validateCommit(sharedCommit, "Inspected SHARED REPOSITORY commit");
+	const setupRef = "refs/pi-config-sync/setup/inspected";
+	await executeGit(
+		options.exec,
+		workspace,
+		["fetch", "--no-tags", "origin", `${branchRef}:${setupRef}`],
+		"SHARED REPOSITORY manifest fetch",
+		{ signal: options.signal },
+	);
+	const manifestResult = await executeGit(
+		options.exec,
+		workspace,
+		["show", `${setupRef}:${SHARED_MANIFEST_PATH}`],
+		"SHARED REPOSITORY manifest read",
+		{ signal: options.signal, allowFailure: true },
+	);
+	if (manifestResult.code !== 0) {
+		throw new GitOperationError(
+			`SHARED REPOSITORY is not empty and does not contain a valid ${SHARED_MANIFEST_PATH} manifest.`,
+		);
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(manifestResult.stdout);
+	} catch {
+		throw new GitOperationError(
+			`SHARED REPOSITORY is not empty and does not contain a valid ${SHARED_MANIFEST_PATH} manifest.`,
+		);
+	}
+	let manifest: SharedManifest;
+	try {
+		manifest = validateArtifact(SharedManifestSchema, value, "SHARED REPOSITORY manifest");
+	} catch {
+		throw new GitOperationError(
+			`SHARED REPOSITORY is not empty and does not contain a valid ${SHARED_MANIFEST_PATH} manifest.`,
+		);
+	}
+	return Object.freeze({
+		empty: false,
+		manifest: Object.freeze({ ...manifest, managedScope: [...manifest.managedScope] }),
+		privacyNotice: "SHARED REPOSITORY privacy could not be verified.",
+		sharedCommit,
+		workspace,
+	});
 }
 
 export async function fetchSharedSnapshot(options: {

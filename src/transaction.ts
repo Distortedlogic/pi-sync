@@ -45,6 +45,12 @@ export interface BackupCleanupResult {
 	failedBackupIds: readonly string[];
 }
 
+export interface MachineRestoreSuccess {
+	status: "success";
+	backupId: string;
+	restoredPaths: readonly string[];
+}
+
 export class MachineApplyError extends Error {
 	readonly backupId?: string;
 	readonly restored: boolean;
@@ -379,6 +385,73 @@ async function restoreBackup(options: {
 		}
 	}
 	return manualRecoveryPaths;
+}
+
+async function verifyRestoredBackup(options: {
+	machineRoot: string;
+	metadata: BackupMetadata;
+	operations: MachineApplyOperations;
+}): Promise<string[]> {
+	const failedPaths: string[] = [];
+	for (const entry of options.metadata.entries) {
+		try {
+			const machinePath = await assertSafePath(options.operations, options.machineRoot, entry.path);
+			const details = await pathDetails(options.operations, machinePath);
+			if (!entry.existed) {
+				if (details) throw new MachineApplyError(`Restored path must not exist: ${entry.path}`);
+				continue;
+			}
+			if (!details?.isFile()) throw new MachineApplyError(`Restored file is unavailable: ${entry.path}`);
+			const content = await options.operations.readFile(machinePath);
+			if (hash(content) !== entry.sha256 || portableExecutableBit(details.mode) !== entry.executable) {
+				throw new MachineApplyError(`Restored file verification failed: ${entry.path}`);
+			}
+		} catch {
+			failedPaths.push(entry.path);
+		}
+	}
+	return failedPaths;
+}
+
+export async function restoreVerifiedMachineBackup(options: {
+	agentDirectory: string;
+	machineRoot: string;
+	backupId: string;
+	expectedPlanId?: string;
+	operations?: MachineApplyOperations;
+}): Promise<MachineRestoreSuccess> {
+	const operations = options.operations ?? createMachineApplyOperations();
+	const metadata = await verifyBackup({
+		agentDirectory: options.agentDirectory,
+		backupId: options.backupId,
+		operations,
+	});
+	if (options.expectedPlanId && metadata.planId !== options.expectedPlanId) {
+		throw new MachineApplyError("Backup does not match the confirmed restore plan.", { backupId: options.backupId });
+	}
+	const restoreFailures = await restoreBackup({
+		agentDirectory: options.agentDirectory,
+		machineRoot: options.machineRoot,
+		metadata,
+		operations,
+	});
+	const verificationFailures = await verifyRestoredBackup({
+		machineRoot: options.machineRoot,
+		metadata,
+		operations,
+	});
+	const manualRecoveryPaths = [...new Set([...restoreFailures, ...verificationFailures])].sort();
+	if (manualRecoveryPaths.length > 0) {
+		throw new MachineApplyError("Backup restore failed. Manual recovery is required.", {
+			backupId: options.backupId,
+			manualRecoveryPaths,
+		});
+	}
+	return {
+		status: "success",
+		backupId: options.backupId,
+		restoredPaths: Object.freeze(metadata.entries.map((entry) => entry.path)),
+	};
 }
 
 export async function applyMachinePlan(options: {

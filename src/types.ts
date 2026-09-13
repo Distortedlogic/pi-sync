@@ -59,6 +59,14 @@ export const ConfigDocumentSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const SharedManifestSchema = Type.Object(
+	{
+		managedScope: ScopeSchema,
+		schemaVersion: SchemaVersionSchema,
+	},
+	{ additionalProperties: false },
+);
+
 export const BaselineSchema = Type.Object(
 	{
 		commit: GitCommitSchema,
@@ -273,6 +281,7 @@ export type RepositoryConfig = Static<typeof RepositoryConfigSchema>;
 export type ScopeApproval = Static<typeof ScopeApprovalSchema>;
 export type LocalPolicy = Static<typeof LocalPolicySchema>;
 export type ConfigDocument = Static<typeof ConfigDocumentSchema>;
+export type SharedManifest = Static<typeof SharedManifestSchema>;
 export type Baseline = Static<typeof BaselineSchema>;
 export type StateDocument = Static<typeof StateDocumentSchema>;
 export type PlanArtifact = Static<typeof PlanArtifactSchema>;
