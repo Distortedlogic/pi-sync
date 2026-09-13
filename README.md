@@ -4,7 +4,13 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 01 does not permit PUBLISH or APPLY operations. The command makes no configuration change.
+The package registers `/config-sync`. Work Unit 02 does not permit PUBLISH or APPLY operations. The command makes no configuration change.
+
+## Data location
+
+Configuration sync data is stored under `$PI_CODING_AGENT_DIR/.config-sync/`. Configuration, state, journal, plans, candidates, and backups stay outside the SHARED REPOSITORY working tree.
+
+The default managed scope includes Pi settings, keybindings, instructions, extensions, skills, prompts, and themes. It excludes `models.json`. Permanent deny rules exclude credentials, environment files, sessions, installed package data, Git data, and configuration sync state.
 
 ## Runtime dependency decisions
 
