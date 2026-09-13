@@ -233,6 +233,8 @@ export const PackageJournalEventSchema = Type.Object(
 export const OperationJournalSchema = Type.Object(
 	{
 		backupId: Type.Optional(ArtifactIdSchema),
+		candidateCommit: Type.Optional(GitCommitSchema),
+		completedActionIds: Type.Optional(Type.Array(Sha256Schema, { uniqueItems: true })),
 		packageEvents: Type.Optional(Type.Array(PackageJournalEventSchema)),
 		planId: Sha256Schema,
 		publishedCommit: Type.Optional(GitCommitSchema),
@@ -274,5 +276,6 @@ export type ConfigDocument = Static<typeof ConfigDocumentSchema>;
 export type Baseline = Static<typeof BaselineSchema>;
 export type StateDocument = Static<typeof StateDocumentSchema>;
 export type PlanArtifact = Static<typeof PlanArtifactSchema>;
+export type JournalStage = Static<typeof JournalStageSchema>;
 export type OperationJournal = Static<typeof OperationJournalSchema>;
 export type BackupMetadata = Static<typeof BackupMetadataSchema>;

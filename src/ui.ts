@@ -1,5 +1,6 @@
 import { DynamicBorder, type ExtensionCommandContext, getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import { planActionId } from "./plan.ts";
 import type { PlanArtifact } from "./types.ts";
 
 export const PLAN_SECTIONS = [
@@ -58,12 +59,19 @@ function sectionRows(section: PlanSection, actions: readonly PlanArtifact["actio
 		? actions.map((action) => ({
 				section,
 				text: actionText(action),
-				actionKey: `${action.action}:${action.path}`,
+				actionKey: planActionId(action),
 			}))
 		: [{ section, text: "(none)" }];
 }
 
-export function formatPlanRows(plan: Readonly<PlanArtifact>, view: PlanView): readonly Readonly<FormattedPlanRow>[] {
+export function formatPlanRows(
+	plan: Readonly<PlanArtifact>,
+	view: PlanView,
+	completedActionIds?: ReadonlySet<string>,
+): readonly Readonly<FormattedPlanRow>[] {
+	const actions = completedActionIds
+		? plan.actions.filter((action) => completedActionIds.has(planActionId(action)))
+		: plan.actions;
 	const rows: FormattedPlanRow[] = [
 		{
 			section: "FINAL RESULT",
@@ -72,30 +80,30 @@ export function formatPlanRows(plan: Readonly<PlanArtifact>, view: PlanView): re
 		{ section: "FINAL RESULT", text: `Mode: ${plan.mode.toUpperCase()}` },
 		{ section: "FINAL RESULT", text: `SHARED REPOSITORY checked at: ${plan.remoteCheckedAt}` },
 	];
-	const finalResultActions = plan.actions.filter(
+	const finalResultActions = actions.filter(
 		(action) => action.direction === "baseline-only" || action.risk === "policy",
 	);
 	if (finalResultActions.length > 0) rows.push(...sectionRows("FINAL RESULT", finalResultActions));
 	rows.push(
 		...sectionRows(
 			"THIS MACHINE → SHARED REPOSITORY",
-			plan.actions.filter((action) => action.direction === "machine-to-shared" && !action.codeExecution),
+			actions.filter((action) => action.direction === "machine-to-shared" && !action.codeExecution),
 		),
 		...sectionRows(
 			"SHARED REPOSITORY → THIS MACHINE",
-			plan.actions.filter((action) => action.direction === "shared-to-machine" && !action.codeExecution),
+			actions.filter((action) => action.direction === "shared-to-machine" && !action.codeExecution),
 		),
 		...sectionRows(
 			"CODE EXECUTION",
-			plan.actions.filter((action) => action.codeExecution),
+			actions.filter((action) => action.codeExecution),
 		),
 		...sectionRows(
 			"DELETIONS",
-			plan.actions.filter((action) => action.risk === "deletion"),
+			actions.filter((action) => action.risk === "deletion"),
 		),
 		...sectionRows(
 			"CONFLICTS",
-			plan.actions.filter((action) => action.risk === "conflict"),
+			actions.filter((action) => action.risk === "conflict"),
 		),
 	);
 	const effects = [...plan.prohibitedEffects, ...plan.noOpEffects];
@@ -110,8 +118,12 @@ export function formatPlanRows(plan: Readonly<PlanArtifact>, view: PlanView): re
 	return Object.freeze(rows.map((row) => Object.freeze(row)));
 }
 
-export function formatPlanText(plan: Readonly<PlanArtifact>, view: PlanView): string {
-	const rows = formatPlanRows(plan, view);
+export function formatPlanText(
+	plan: Readonly<PlanArtifact>,
+	view: PlanView,
+	completedActionIds?: ReadonlySet<string>,
+): string {
+	const rows = formatPlanRows(plan, view, completedActionIds);
 	return PLAN_SECTIONS.map((section) => {
 		const content = rows.filter((row) => row.section === section).map((row) => `- ${row.text}`);
 		return `## ${section}\n${content.join("\n")}`;

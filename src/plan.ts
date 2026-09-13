@@ -376,6 +376,12 @@ function securityAction(action: Readonly<PlanArtifactAction>): Record<string, un
 	};
 }
 
+export function planActionId(action: Readonly<PlanArtifactAction>): string {
+	const canonical = stableStringify(securityAction(action));
+	if (canonical === undefined) throw new Error("Cannot identify a plan action.");
+	return createHash("sha256").update(canonical).digest("hex");
+}
+
 function securityEffect(effect: Readonly<PlanEffect>): Record<string, unknown> {
 	return {
 		code: effect.code,
@@ -434,4 +440,29 @@ export function buildPlanArtifact(options: BuildPlanArtifactOptions): Readonly<P
 		planId,
 		shortPlanId: planId.slice(0, 12),
 	});
+}
+
+export function assertPlanArtifactIntegrity(plan: Readonly<PlanArtifact>): void {
+	const rebuilt = buildPlanArtifact({
+		actions: plan.actions,
+		baselineCommit: plan.baselineCommit,
+		createdAt: plan.createdAt,
+		decisions: plan.decisions,
+		effectivePaths: plan.effectivePaths,
+		finalMachineTree: plan.finalMachineTree,
+		finalSharedTree: plan.finalSharedTree,
+		machineFingerprint: plan.machineFingerprint,
+		mode: plan.mode,
+		noOpEffects: plan.noOpEffects,
+		packageFingerprint: plan.packageFingerprint,
+		policyFingerprint: plan.policyFingerprint,
+		prohibitedEffects: plan.prohibitedEffects,
+		remoteCheckedAt: plan.remoteCheckedAt,
+		sharedCommit: plan.sharedCommit,
+		sharedFingerprint: plan.sharedFingerprint,
+		scopeExpansion: plan.scopeExpansion,
+	});
+	if (stableStringify(rebuilt) !== stableStringify(plan)) {
+		throw new Error("Plan artifact integrity check failed.");
+	}
 }

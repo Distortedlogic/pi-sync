@@ -211,7 +211,7 @@ describe("approved package execution", () => {
 			expect(rememberApprovals).toHaveBeenCalledWith(["npm:install@1.0.0"]);
 			expect(events.at(-1)).toBe("remember:npm:install@1.0.0");
 			const journal = await loadJournal(agentDirectory);
-			expect(journal?.stage).toBe("packages_applied");
+			expect(journal?.stage).toBe("machine_files_applied");
 			expect(journal?.packageEvents?.map(({ operation, status }) => `${operation}:${status}`)).toEqual([
 				"remove:started",
 				"remove:completed",

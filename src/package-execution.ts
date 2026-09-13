@@ -181,8 +181,8 @@ function validateExactSources(options: {
 
 async function requireJournal(agentDirectory: string, planId: string): Promise<OperationJournal> {
 	const journal = await loadJournal(agentDirectory);
-	if (!journal || journal.planId !== planId || journal.stage === "complete") {
-		throw new PackageExecutionError("Operation journal does not match the confirmed package plan.");
+	if (!journal || journal.planId !== planId || journal.stage !== "machine_files_applied") {
+		throw new PackageExecutionError("Operation journal is not ready for the confirmed package plan.");
 	}
 	return journal;
 }
@@ -394,8 +394,6 @@ export async function executeConfirmedPackagePlan(options: {
 			.filter((decision) => decision.choice === "approve_and_remember")
 			.map((decision) => decision.exactSource as string);
 		if (rememberedSources.length > 0) await options.rememberApprovals?.(Object.freeze(rememberedSources));
-		journal = { ...journal, stage: "packages_applied", updatedAt: now() };
-		await saveJournal(options.agentDirectory, journal);
 	} catch (error) {
 		const rollbackErrors: PackageRollbackError[] = [];
 		for (const action of [...completed].reverse()) {
