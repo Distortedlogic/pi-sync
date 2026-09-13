@@ -166,7 +166,7 @@ describe("plan and receipt formatting", () => {
 		const text = formatPlanText(plan(), "final-plan");
 		expect(text).toMatchInlineSnapshot(`
 "## FINAL RESULT
-- Final immutable plan 6d3124efe242c65b5488915c8efde7f16d36113c02ab7bfcb947dbcc93df09db (6d3124efe242)
+- Final immutable plan 55f162ec8dee71fd6809440678f21288163bd08186c83fa55c44ee4fd4f6799d (55f162ec8dee)
 - Mode: RECONCILE
 - SHARED REPOSITORY checked at: 2026-01-01T00:00:01.000Z
 

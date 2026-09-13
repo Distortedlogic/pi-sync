@@ -139,10 +139,16 @@ export const PlanArtifactActionSchema = Type.Object(
 		codeExecution: Type.Boolean(),
 		destination: PlanDestinationSchema,
 		direction: PlanDirectionSchema,
+		bestEffort: Type.Optional(Type.Boolean()),
 		exactPackageSource: Type.Optional(Type.String({ minLength: 1 })),
 		finalResult: Type.String({ minLength: 1 }),
 		normalizedPackageSource: Type.Optional(Type.String({ minLength: 1 })),
+		packageOperation: Type.Optional(
+			Type.Union([Type.Literal("install"), Type.Literal("update"), Type.Literal("remove")]),
+		),
 		path: PathSchema,
+		previousExactPackageSource: Type.Optional(Type.String({ minLength: 1 })),
+		previousNormalizedPackageSource: Type.Optional(Type.String({ minLength: 1 })),
 		reason: Type.String({ minLength: 1 }),
 		resultSha256: Type.Union([Sha256Schema, Type.Null()]),
 		risk: PlanRiskSchema,
@@ -164,6 +170,8 @@ export const PlanDecisionSchema = Type.Object(
 		exactSource: Type.Optional(Type.String({ minLength: 1 })),
 		id: Type.String({ minLength: 1 }),
 		normalizedSource: Type.Optional(Type.String({ minLength: 1 })),
+		previousExactSource: Type.Optional(Type.String({ minLength: 1 })),
+		previousNormalizedSource: Type.Optional(Type.String({ minLength: 1 })),
 	},
 	{ additionalProperties: false },
 );
@@ -205,9 +213,27 @@ export const PlanArtifactSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const PackageJournalEventSchema = Type.Object(
+	{
+		actionId: Sha256Schema,
+		operation: Type.Union([Type.Literal("install"), Type.Literal("update"), Type.Literal("remove")]),
+		status: Type.Union([
+			Type.Literal("started"),
+			Type.Literal("completed"),
+			Type.Literal("best_effort_failed"),
+			Type.Literal("rollback_started"),
+			Type.Literal("rolled_back"),
+			Type.Literal("rollback_failed"),
+		]),
+		timestamp: TimestampSchema,
+	},
+	{ additionalProperties: false },
+);
+
 export const OperationJournalSchema = Type.Object(
 	{
 		backupId: Type.Optional(ArtifactIdSchema),
+		packageEvents: Type.Optional(Type.Array(PackageJournalEventSchema)),
 		planId: Sha256Schema,
 		publishedCommit: Type.Optional(GitCommitSchema),
 		reviewedSharedCommit: Type.Union([GitCommitSchema, Type.Null()]),

@@ -360,12 +360,16 @@ function artifactEffect(effect: PlanEffect): Readonly<PlanEffect> {
 function securityAction(action: Readonly<PlanArtifactAction>): Record<string, unknown> {
 	return {
 		action: action.action,
+		bestEffort: action.bestEffort ?? false,
 		codeExecution: action.codeExecution,
 		destination: action.destination,
 		direction: action.direction,
 		exactPackageSource: action.exactPackageSource ?? null,
 		normalizedPackageSource: action.normalizedPackageSource ?? null,
+		packageOperation: action.packageOperation ?? null,
 		path: action.path,
+		previousExactPackageSource: action.previousExactPackageSource ?? null,
+		previousNormalizedPackageSource: action.previousNormalizedPackageSource ?? null,
 		resultSha256: action.resultSha256,
 		risk: action.risk,
 		sourceSha256: action.sourceSha256,

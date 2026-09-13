@@ -319,6 +319,21 @@ function decisionIdentity(
 	);
 }
 
+export function packageSetFingerprint(packages: readonly Readonly<ParsedPackageDeclaration>[]): string {
+	const value = stableStringify(
+		[...packages]
+			.sort((left, right) => left.identity.localeCompare(right.identity))
+			.map(({ declaration, exactSource, identity, normalizedSource }) => ({
+				declaration,
+				exactSource,
+				identity,
+				normalizedSource,
+			})),
+	);
+	if (value === undefined) throw new PackagePlanError("Cannot fingerprint package declarations.");
+	return createHash("sha256").update(value).digest("hex");
+}
+
 export function applyPackageDecisions(
 	plan: Readonly<PackagePlan>,
 	decisions: readonly Readonly<PackageDecision>[],

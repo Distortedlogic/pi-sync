@@ -4,7 +4,7 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 09 can apply confirmed file actions to THIS MACHINE after it creates and verifies a recovery backup. It does not execute package actions.
+The package registers `/config-sync`. Work Unit 10 can execute exact confirmed package actions and then write the exact planned `settings.json` on THIS MACHINE.
 
 ## Data location
 
@@ -25,6 +25,8 @@ Final plans have full and short SHA-256 IDs, fixed review sections, exact destin
 Candidate validation checks every managed staged file, all managed JSON, conflict markers, permanent denies, shared package policy, machine-only preservation, and exact final-tree fingerprints. Secretlint scans the complete managed tree and exact candidate difference with its recommended preset. Scanner failures block PUBLISH. Reports contain only finding type, relative path, and line number.
 
 Machine file application requires an exact plan authorization and a valid baseline for each deletion. A verified backup records every affected prior file and every path that will be created. Writes are atomic. Final hashes are verified. A failure restores the complete backup, or reports exact manual recovery paths. Backup cleanup is a separate best-effort operation and always keeps the newest valid recovery backup.
+
+Package execution revalidates every exact source and complete approval set before it calls `pi install` or `pi remove`. Actions run in deterministic order with time limits and cancellation signals. The journal records every start and completion. A failure reverses completed actions in reverse order and restores `settings.json`. Rollback errors remain separate from the original error. Remembered approvals are written only after every approved action succeeds.
 
 ## Runtime dependency decisions
 
