@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	CONFIG_SYNC_SUBCOMMANDS,
 	deriveFooterStatus,
+	formatDifferenceOutput,
 	parseConfigSyncCommand,
 	StatusGenerationGuard,
 } from "../src/commands.ts";
@@ -88,6 +89,12 @@ describe("configuration command routing", () => {
 				]),
 			),
 		).toBe("Config sync: 1 conflicts");
+	});
+
+	it("limits large plain-text difference output", () => {
+		const output = formatDifferenceOutput(`${"changed line\n".repeat(6_000)}`);
+		expect(Buffer.byteLength(output)).toBeLessThan(60 * 1024);
+		expect(output).toContain("Difference truncated");
 	});
 
 	it("invalidates late status generations on replacement or shutdown", () => {

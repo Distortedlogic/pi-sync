@@ -323,10 +323,16 @@ describe("transaction coordinator", () => {
 		}
 	});
 
-	it("rejects a stale full plan before shared, machine, or package effects", async () => {
+	it.each([
+		{ name: "THIS MACHINE changed", override: { machineFingerprint: "9".repeat(64) } },
+		{ name: "SHARED REPOSITORY changed", override: { sharedFingerprint: "9".repeat(64) } },
+		{ name: "managed scope changed", override: { effectivePaths: ["changed-scope.json"] } },
+		{ name: "policy changed", override: { policyFingerprint: "9".repeat(64) } },
+		{ name: "package source changed", override: { packageFingerprint: "9".repeat(64) } },
+	])("rejects a stale full plan when $name", async ({ override }) => {
 		const temporary = await createTemporaryAgentDirectory();
 		const plan = createPlan();
-		const stale = createPlan({ machineFingerprint: "9".repeat(64) });
+		const stale = createPlan(override);
 		const events: string[] = [];
 		try {
 			await prepare(temporary.path, plan);

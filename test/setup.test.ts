@@ -201,6 +201,26 @@ describe("setup repository inspection", () => {
 		}
 	});
 
+	it.each(["offline", "authentication"])("blocks %s failure without changing SHARED REPOSITORY refs", async () => {
+		const agent = await createTemporaryAgentDirectory();
+		const shared = await createTemporaryBareGitRepository();
+		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
+		try {
+			await inspectSetupRepository({ exec: gitExec(), agentDirectory: agent.path, repository });
+			const refsBefore = await repositoryRefs(shared.path);
+			const unavailable: GitExec = async (command, args, options) =>
+				args.includes("ls-remote")
+					? { stdout: "", stderr: "unavailable", code: 1, killed: false }
+					: gitExec()(command, args, options);
+			await expect(
+				inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
+			).rejects.toThrow("access verification failed");
+			expect(await repositoryRefs(shared.path)).toBe(refsBefore);
+		} finally {
+			await Promise.all([agent.cleanup(), shared.cleanup()]);
+		}
+	});
+
 	it("does not delete or replace an existing invalid clone path", async () => {
 		const agent = await createTemporaryAgentDirectory();
 		const shared = await createTemporaryBareGitRepository();

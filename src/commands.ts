@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionContext,
+	truncateHead,
+} from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
 import { resolveScopePlan } from "./config.ts";
 import { buildConflictSummaries, collectConflictDecisions, createConflictMergeWorkspace } from "./conflicts.ts";
@@ -583,6 +590,13 @@ export function deriveFooterStatus(plan: Readonly<PlanArtifact>): FooterStatusTe
 	return apply > 0 ? `Config sync: ${apply} to apply` : "Config sync: clean";
 }
 
+export function formatDifferenceOutput(difference: string): string {
+	const truncated = truncateHead(difference, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+	return truncated.truncated
+		? `${truncated.content}\n\n[Difference truncated. Run /config-sync diff with a narrower path.]`
+		: truncated.content;
+}
+
 export function parseConfigSyncCommand(argumentsText: string): ParsedCommand {
 	const parts = argumentsText.trim().split(/\s+/).filter(Boolean);
 	const command = parts.shift() ?? "status";
@@ -986,7 +1000,7 @@ async function runDiff(pi: ExtensionAPI, ctx: ExtensionCommandContext, path?: st
 				kind: "difference",
 				path,
 			});
-			ctx.ui.notify(result.diff || "No reviewed difference.", "info");
+			ctx.ui.notify(result.diff ? formatDifferenceOutput(result.diff) : "No reviewed difference.", "info");
 		},
 	});
 }

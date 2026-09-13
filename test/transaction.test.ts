@@ -400,4 +400,49 @@ describe("backup cleanup", () => {
 			await temporary.cleanup();
 		}
 	});
+
+	it("reports cleanup failures and retains the affected verified backup", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const agentDirectory = join(temporary.path, "agent");
+		const machineRoot = join(temporary.path, "machine");
+		const first = { "a.txt": file("a.txt", "first") };
+		const second = { "a.txt": file("a.txt", "second") };
+		const third = { "a.txt": file("a.txt", "third") };
+		try {
+			await writeTree(machineRoot, first);
+			await applyMachinePlan({
+				agentDirectory,
+				machineRoot,
+				backupId: "backup-old-failure",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				applySet: applySet(first, second),
+			});
+			await applyMachinePlan({
+				agentDirectory,
+				machineRoot,
+				backupId: "backup-new-success",
+				createdAt: "2026-01-02T00:00:00.000Z",
+				applySet: applySet(second, third),
+			});
+			const native = createMachineApplyOperations();
+			const cleanup = await cleanupMachineBackups({
+				agentDirectory,
+				retain: 1,
+				operations: {
+					...native,
+					rm: async () => {
+						throw new Error("injected cleanup failure");
+					},
+				},
+			});
+			expect(cleanup.keptBackupIds).toEqual(["backup-new-success"]);
+			expect(cleanup.deletedBackupIds).toEqual([]);
+			expect(cleanup.failedBackupIds).toEqual(["backup-old-failure"]);
+			await expect(readFile(getBackupMetadataPath(agentDirectory, "backup-old-failure"), "utf8")).resolves.toContain(
+				"backup-old-failure",
+			);
+		} finally {
+			await temporary.cleanup();
+		}
+	});
 });
