@@ -4,7 +4,7 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 08 validates the complete staged tree and exact candidate difference before candidate commit creation. It does not execute package actions or APPLY configuration to THIS MACHINE.
+The package registers `/config-sync`. Work Unit 09 can apply confirmed file actions to THIS MACHINE after it creates and verifies a recovery backup. It does not execute package actions.
 
 ## Data location
 
@@ -23,6 +23,8 @@ Settings plans use stable JSON and identify changes by JSON Pointer. Machine-onl
 Final plans have full and short SHA-256 IDs, fixed review sections, exact destinations, final trees, decisions, and explicit effects that will not happen. Display text is outside the security fingerprint. TUI and RPC reviews collect decisions before rebuilding the final plan. Execution authorization requires the exact full plan ID. JSON and print modes return the plan without authorization.
 
 Candidate validation checks every managed staged file, all managed JSON, conflict markers, permanent denies, shared package policy, machine-only preservation, and exact final-tree fingerprints. Secretlint scans the complete managed tree and exact candidate difference with its recommended preset. Scanner failures block PUBLISH. Reports contain only finding type, relative path, and line number.
+
+Machine file application requires an exact plan authorization and a valid baseline for each deletion. A verified backup records every affected prior file and every path that will be created. Writes are atomic. Final hashes are verified. A failure restores the complete backup, or reports exact manual recovery paths. Backup cleanup is a separate best-effort operation and always keeps the newest valid recovery backup.
 
 ## Runtime dependency decisions
 
