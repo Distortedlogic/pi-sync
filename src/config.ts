@@ -32,6 +32,8 @@ export interface ConfigSyncPaths {
 	plansDirectory: string;
 	candidatesDirectory: string;
 	backupsDirectory: string;
+	repositoryDirectory: string;
+	hooksDirectory: string;
 }
 
 export interface ScopePlan {
@@ -70,14 +72,16 @@ export function getConfigSyncPaths(agentDirectory: string): Readonly<ConfigSyncP
 		plansDirectory: resolve(root, "plans"),
 		candidatesDirectory: resolve(root, "candidates"),
 		backupsDirectory: resolve(root, "backups"),
+		repositoryDirectory: resolve(root, "repository"),
+		hooksDirectory: resolve(root, "hooks-disabled"),
 	});
 }
 
 export async function ensureConfigSyncDirectories(agentDirectory: string): Promise<Readonly<ConfigSyncPaths>> {
 	const paths = getConfigSyncPaths(agentDirectory);
 	await Promise.all(
-		[paths.root, paths.plansDirectory, paths.candidatesDirectory, paths.backupsDirectory].map((path) =>
-			mkdir(path, { recursive: true }),
+		[paths.root, paths.plansDirectory, paths.candidatesDirectory, paths.backupsDirectory, paths.hooksDirectory].map(
+			(path) => mkdir(path, { recursive: true }),
 		),
 	);
 	return paths;
