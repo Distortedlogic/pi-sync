@@ -91,7 +91,10 @@ export function createDefaultLocalPolicy(): LocalPolicy {
 	return {
 		acceptedSharedScope: [],
 		approvedScope: [...DEFAULT_MANAGED_SCOPE],
+		approvedSharedPackageSchemes: ["git", "https", "npm", "ssh"],
+		machineOnlyPackageSources: [],
 		machineOnlySettings: [],
+		requirePinnedSharedPackages: true,
 	};
 }
 
@@ -143,6 +146,8 @@ export function approveScopeExpansion(
 		...policy,
 		acceptedSharedScope: [...policy.acceptedSharedScope],
 		approvedScope: [...policy.approvedScope],
+		approvedSharedPackageSchemes: [...policy.approvedSharedPackageSchemes],
+		machineOnlyPackageSources: [...policy.machineOnlyPackageSources],
 		machineOnlySettings: [...policy.machineOnlySettings],
 		pendingScopeApproval: {
 			approvedInPlanId,
@@ -160,6 +165,9 @@ export function activateScopeApprovalForPlan(policy: LocalPolicy, planId: string
 	return {
 		acceptedSharedScope: [...approval.requestedScope],
 		approvedScope: [...policy.approvedScope],
+		approvedSharedPackageSchemes: [...policy.approvedSharedPackageSchemes],
+		machineOnlyPackageSources: [...policy.machineOnlyPackageSources],
 		machineOnlySettings: [...policy.machineOnlySettings],
+		requirePinnedSharedPackages: policy.requirePinnedSharedPackages,
 	};
 }

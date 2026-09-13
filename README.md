@@ -4,7 +4,7 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 05 can prepare and publish reviewed SHARED REPOSITORY candidate commits. It does not APPLY configuration to THIS MACHINE.
+The package registers `/config-sync`. Work Unit 06 plans settings and package effects. It does not execute package actions or APPLY configuration to THIS MACHINE.
 
 ## Data location
 
@@ -17,6 +17,8 @@ File inventory rejects symlinks, special files, nested repositories, unsafe path
 The pure three-way planner classifies machine, shared, and baseline values. It produces fixed-direction actions, blocks modes that require the opposite direction, sorts actions by risk and path, and computes exact final trees without file, Git, network, UI, or time access.
 
 Git work uses a dedicated extension-owned worktree and `pi.exec()` argument arrays. Planning fetches and names the exact SHARED REPOSITORY commit. Candidate commits keep that commit as their only parent. PUBLISH fetches again and returns `PLAN EXPIRED` if SHARED REPOSITORY changed. Diff operations use the last named snapshot and access the network only through an explicit refresh request.
+
+Settings plans use stable JSON and identify changes by JSON Pointer. Machine-only settings and approved machine-only package declarations survive APPLY. Package install, update, and removal actions are separate code-execution actions. Every action requires a complete decision for its exact source.
 
 ## Runtime dependency decisions
 

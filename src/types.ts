@@ -41,8 +41,11 @@ export const LocalPolicySchema = Type.Object(
 	{
 		acceptedSharedScope: ScopeSchema,
 		approvedScope: ScopeSchema,
-		machineOnlySettings: Type.Array(Type.String({ pattern: "^/" }), { uniqueItems: true }),
+		approvedSharedPackageSchemes: ScopeSchema,
+		machineOnlyPackageSources: ScopeSchema,
+		machineOnlySettings: Type.Array(Type.String({ pattern: "^(?:\\/(?:[^~/]|~[01])*)+$" }), { uniqueItems: true }),
 		pendingScopeApproval: Type.Optional(ScopeApprovalSchema),
+		requirePinnedSharedPackages: Type.Boolean(),
 	},
 	{ additionalProperties: false },
 );
