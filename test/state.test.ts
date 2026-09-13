@@ -119,17 +119,25 @@ describe("configuration storage", () => {
 			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
 		};
 		const plan: PlanArtifact = {
+			actions: [],
 			baselineCommit: BASELINE_COMMIT,
 			createdAt: "2026-01-01T00:00:00.000Z",
+			decisions: [],
 			effectivePaths: ["settings.json"],
+			finalMachineTree: {},
+			finalSharedTree: {},
 			machineFingerprint: "c".repeat(64),
 			mode: "reconcile",
+			noOpEffects: [],
 			packageFingerprint: "d".repeat(64),
 			planId: FIRST_PLAN_ID,
 			policyFingerprint: "e".repeat(64),
+			prohibitedEffects: [],
+			remoteCheckedAt: "2026-01-01T00:00:01.000Z",
 			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
 			sharedCommit: BASELINE_COMMIT,
 			sharedFingerprint: "f".repeat(64),
+			shortPlanId: FIRST_PLAN_ID.slice(0, 12),
 			scopeExpansion: null,
 		};
 		const journal: OperationJournal = {

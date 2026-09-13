@@ -110,19 +110,96 @@ export const StateDocumentSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const PlanRiskSchema = Type.Union([
+	Type.Literal("policy"),
+	Type.Literal("package"),
+	Type.Literal("conflict"),
+	Type.Literal("deletion"),
+	Type.Literal("write"),
+	Type.Literal("baseline"),
+]);
+
+export const PlanDirectionSchema = Type.Union([
+	Type.Literal("machine-to-shared"),
+	Type.Literal("shared-to-machine"),
+	Type.Literal("baseline-only"),
+	Type.Literal("none"),
+]);
+
+export const PlanDestinationSchema = Type.Union([
+	Type.Literal("THIS MACHINE"),
+	Type.Literal("SHARED REPOSITORY"),
+	Type.Literal("BASELINE"),
+	Type.Literal("NONE"),
+]);
+
+export const PlanArtifactActionSchema = Type.Object(
+	{
+		action: Type.String({ minLength: 1 }),
+		codeExecution: Type.Boolean(),
+		destination: PlanDestinationSchema,
+		direction: PlanDirectionSchema,
+		exactPackageSource: Type.Optional(Type.String({ minLength: 1 })),
+		finalResult: Type.String({ minLength: 1 }),
+		normalizedPackageSource: Type.Optional(Type.String({ minLength: 1 })),
+		path: PathSchema,
+		reason: Type.String({ minLength: 1 }),
+		resultSha256: Type.Union([Sha256Schema, Type.Null()]),
+		risk: PlanRiskSchema,
+		sourceSha256: Type.Union([Sha256Schema, Type.Null()]),
+	},
+	{ additionalProperties: false },
+);
+
+export const PlanDecisionSchema = Type.Object(
+	{
+		category: Type.Union([
+			Type.Literal("policy"),
+			Type.Literal("conflict"),
+			Type.Literal("deletion"),
+			Type.Literal("extension"),
+			Type.Literal("package"),
+		]),
+		choice: Type.String({ minLength: 1 }),
+		exactSource: Type.Optional(Type.String({ minLength: 1 })),
+		id: Type.String({ minLength: 1 }),
+		normalizedSource: Type.Optional(Type.String({ minLength: 1 })),
+	},
+	{ additionalProperties: false },
+);
+
+export const PlanEffectSchema = Type.Object(
+	{
+		code: Type.String({ minLength: 1 }),
+		count: Type.Optional(Type.Integer({ minimum: 0 })),
+		description: Type.String({ minLength: 1 }),
+		destination: PlanDestinationSchema,
+		path: Type.Optional(PathSchema),
+	},
+	{ additionalProperties: false },
+);
+
 export const PlanArtifactSchema = Type.Object(
 	{
+		actions: Type.Array(PlanArtifactActionSchema),
 		baselineCommit: Type.Union([GitCommitSchema, Type.Null()]),
 		createdAt: TimestampSchema,
+		decisions: Type.Array(PlanDecisionSchema),
 		effectivePaths: Type.Array(PathSchema, { uniqueItems: true }),
+		finalMachineTree: FileInventorySchema,
+		finalSharedTree: FileInventorySchema,
 		machineFingerprint: Sha256Schema,
 		mode: Type.Union([Type.Literal("publish"), Type.Literal("apply"), Type.Literal("reconcile")]),
+		noOpEffects: Type.Array(PlanEffectSchema),
 		packageFingerprint: Sha256Schema,
 		planId: Sha256Schema,
 		policyFingerprint: Sha256Schema,
+		prohibitedEffects: Type.Array(PlanEffectSchema),
+		remoteCheckedAt: TimestampSchema,
 		schemaVersion: SchemaVersionSchema,
 		sharedCommit: Type.Union([GitCommitSchema, Type.Null()]),
 		sharedFingerprint: Sha256Schema,
+		shortPlanId: Type.String({ pattern: "^[a-f0-9]{12}$" }),
 		scopeExpansion: Type.Union([ScopeSchema, Type.Null()]),
 	},
 	{ additionalProperties: false },

@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+import stableStringify from "json-stable-stringify";
 import type { FileInventory, InventoryFile } from "./files.ts";
+import { CONFIG_SYNC_SCHEMA_VERSION, type FileFingerprint, type PlanArtifact } from "./types.ts";
 
 export type SyncMode = "publish" | "apply" | "reconcile";
 
@@ -264,5 +267,167 @@ export function createSyncPlan(input: {
 		blockers: Object.freeze(blockers),
 		finalMachineTree: finalTrees.machine,
 		finalSharedTree: finalTrees.shared,
+	});
+}
+
+export type PlanArtifactAction = PlanArtifact["actions"][number];
+export type PlanDecision = PlanArtifact["decisions"][number];
+export type PlanEffect = PlanArtifact["prohibitedEffects"][number];
+
+export interface BuildPlanArtifactOptions {
+	createdAt: string;
+	remoteCheckedAt: string;
+	mode: SyncMode;
+	baselineCommit: string | null;
+	sharedCommit: string | null;
+	machineFingerprint: string;
+	sharedFingerprint: string;
+	policyFingerprint: string;
+	packageFingerprint: string;
+	effectivePaths: readonly string[];
+	scopeExpansion: readonly string[] | null;
+	actions: readonly PlanArtifactAction[];
+	decisions: readonly PlanDecision[];
+	finalMachineTree: Readonly<Record<string, Readonly<InventoryFile | FileFingerprint>>>;
+	finalSharedTree: Readonly<Record<string, Readonly<InventoryFile | FileFingerprint>>>;
+	prohibitedEffects: readonly PlanEffect[];
+	noOpEffects: readonly PlanEffect[];
+}
+
+function artifactTree(
+	files: Readonly<Record<string, Readonly<InventoryFile | FileFingerprint>>>,
+): Readonly<Record<string, Readonly<FileFingerprint>>> {
+	const entries = Object.entries(files)
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([path, file]) => [
+			path,
+			Object.freeze({
+				comparisonSha256: file.comparisonSha256,
+				executable: file.executable,
+				sha256: file.sha256,
+			}),
+		]);
+	return Object.freeze(Object.fromEntries(entries));
+}
+
+function expectedDestination(direction: PlanDirection): PlanArtifactAction["destination"] {
+	switch (direction) {
+		case "machine-to-shared":
+			return "SHARED REPOSITORY";
+		case "shared-to-machine":
+			return "THIS MACHINE";
+		case "baseline-only":
+			return "BASELINE";
+		case "none":
+			return "NONE";
+	}
+}
+
+function artifactAction(action: PlanArtifactAction): Readonly<PlanArtifactAction> {
+	if (action.destination !== expectedDestination(action.direction)) {
+		throw new Error(`Plan action has the wrong destination: ${action.path}`);
+	}
+	const namedDestination =
+		action.action === "WRITE ON THIS MACHINE" ||
+		action.action === "DELETE FROM THIS MACHINE" ||
+		action.action === "INSTALL PACKAGE ON THIS MACHINE" ||
+		action.action === "REMOVE PACKAGE FROM THIS MACHINE"
+			? "THIS MACHINE"
+			: action.action === "WRITE IN SHARED REPOSITORY" || action.action === "DELETE FROM SHARED REPOSITORY"
+				? "SHARED REPOSITORY"
+				: action.action === "UPDATE BASELINE ONLY"
+					? "BASELINE"
+					: action.action === "CONFLICT — NO ACTION SELECTED"
+						? "NONE"
+						: undefined;
+	if (namedDestination && action.destination !== namedDestination) {
+		throw new Error(`Plan action name has the wrong destination: ${action.path}`);
+	}
+	if ((action.risk === "write" || action.risk === "deletion") && action.destination === "NONE") {
+		throw new Error(`Write or deletion has no destination: ${action.path}`);
+	}
+	return Object.freeze({ ...action });
+}
+
+function artifactDecision(decision: PlanDecision): Readonly<PlanDecision> {
+	return Object.freeze({ ...decision });
+}
+
+function artifactEffect(effect: PlanEffect): Readonly<PlanEffect> {
+	return Object.freeze({ ...effect });
+}
+
+function securityAction(action: Readonly<PlanArtifactAction>): Record<string, unknown> {
+	return {
+		action: action.action,
+		codeExecution: action.codeExecution,
+		destination: action.destination,
+		direction: action.direction,
+		exactPackageSource: action.exactPackageSource ?? null,
+		normalizedPackageSource: action.normalizedPackageSource ?? null,
+		path: action.path,
+		resultSha256: action.resultSha256,
+		risk: action.risk,
+		sourceSha256: action.sourceSha256,
+	};
+}
+
+function securityEffect(effect: Readonly<PlanEffect>): Record<string, unknown> {
+	return {
+		code: effect.code,
+		count: effect.count ?? null,
+		destination: effect.destination,
+		path: effect.path ?? null,
+	};
+}
+
+export function buildPlanArtifact(options: BuildPlanArtifactOptions): Readonly<PlanArtifact> {
+	const actions = sortPlanActions(options.actions).map(artifactAction);
+	const decisions = [...options.decisions]
+		.sort((left, right) => left.category.localeCompare(right.category) || left.id.localeCompare(right.id))
+		.map(artifactDecision);
+	const prohibitedEffects = [...options.prohibitedEffects]
+		.sort((left, right) => left.code.localeCompare(right.code) || (left.path ?? "").localeCompare(right.path ?? ""))
+		.map(artifactEffect);
+	const noOpEffects = [...options.noOpEffects]
+		.sort((left, right) => left.code.localeCompare(right.code) || (left.path ?? "").localeCompare(right.path ?? ""))
+		.map(artifactEffect);
+	Object.freeze(actions);
+	Object.freeze(decisions);
+	Object.freeze(prohibitedEffects);
+	Object.freeze(noOpEffects);
+	const finalMachineTree = artifactTree(options.finalMachineTree);
+	const finalSharedTree = artifactTree(options.finalSharedTree);
+	const securityData = {
+		schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
+		createdAt: options.createdAt,
+		remoteCheckedAt: options.remoteCheckedAt,
+		mode: options.mode,
+		baselineCommit: options.baselineCommit,
+		sharedCommit: options.sharedCommit,
+		machineFingerprint: options.machineFingerprint,
+		sharedFingerprint: options.sharedFingerprint,
+		policyFingerprint: options.policyFingerprint,
+		packageFingerprint: options.packageFingerprint,
+		effectivePaths: [...options.effectivePaths].sort(),
+		scopeExpansion: options.scopeExpansion ? [...options.scopeExpansion].sort() : null,
+		actions: actions.map(securityAction),
+		decisions,
+		finalMachineTree,
+		finalSharedTree,
+		prohibitedEffects: prohibitedEffects.map(securityEffect),
+		noOpEffects: noOpEffects.map(securityEffect),
+	};
+	const canonical = stableStringify(securityData);
+	if (canonical === undefined) throw new Error("Cannot create canonical plan data.");
+	const planId = createHash("sha256").update(canonical).digest("hex");
+	return Object.freeze({
+		...securityData,
+		actions,
+		decisions,
+		prohibitedEffects,
+		noOpEffects,
+		planId,
+		shortPlanId: planId.slice(0, 12),
 	});
 }
