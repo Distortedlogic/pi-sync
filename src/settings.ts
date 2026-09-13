@@ -193,6 +193,36 @@ function withPackages(
 	return result;
 }
 
+export function validateMachineOnlyPreservation(options: {
+	currentMachineText: string;
+	finalMachineText: string;
+	policy: LocalPolicy;
+}): void {
+	const current = parseSettings(options.currentMachineText, { source: "machine", policy: options.policy });
+	const final = parseSettings(options.finalMachineText, { source: "machine", policy: options.policy });
+	for (const pointer of options.policy.machineOnlySettings) {
+		validatePolicyPointer(pointer);
+		if (
+			stableStringify(getValueByPointer(current.value, pointer)) !==
+			stableStringify(getValueByPointer(final.value, pointer))
+		) {
+			throw new SettingsPlanError(`Machine-only setting was not preserved at ${pointer}.`);
+		}
+	}
+	const finalPackages = new Map(final.packages.map((entry) => [entry.identity, entry]));
+	for (const entry of current.packages) {
+		if (!entry.machineOnly) continue;
+		const finalEntry = finalPackages.get(entry.identity);
+		if (
+			!finalEntry ||
+			finalEntry.exactSource !== entry.exactSource ||
+			stableStringify(finalEntry.declaration) !== stableStringify(entry.declaration)
+		) {
+			throw new SettingsPlanError(`Machine-only package declaration was not preserved: ${entry.normalizedSource}`);
+		}
+	}
+}
+
 export function createApplySettingsPlan(options: {
 	machineText: string;
 	sharedText: string;

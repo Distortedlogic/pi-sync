@@ -28,6 +28,7 @@
     ]
   },
   "dependencies": {
+    "@secretlint/node": "11.2.4",
     "@secretlint/secretlint-rule-preset-recommend": "11.2.4",
     "diff": "8.0.4",
     "fast-json-patch": "3.1.1",

@@ -4,7 +4,7 @@
 
 ## Current command
 
-The package registers `/config-sync`. Work Unit 07 builds and reviews immutable plans. It does not execute package actions or APPLY configuration to THIS MACHINE.
+The package registers `/config-sync`. Work Unit 08 validates the complete staged tree and exact candidate difference before candidate commit creation. It does not execute package actions or APPLY configuration to THIS MACHINE.
 
 ## Data location
 
@@ -21,6 +21,8 @@ Git work uses a dedicated extension-owned worktree and `pi.exec()` argument arra
 Settings plans use stable JSON and identify changes by JSON Pointer. Machine-only settings and approved machine-only package declarations survive APPLY. Package install, update, and removal actions are separate code-execution actions. Every action requires a complete decision for its exact source.
 
 Final plans have full and short SHA-256 IDs, fixed review sections, exact destinations, final trees, decisions, and explicit effects that will not happen. Display text is outside the security fingerprint. TUI and RPC reviews collect decisions before rebuilding the final plan. Execution authorization requires the exact full plan ID. JSON and print modes return the plan without authorization.
+
+Candidate validation checks every managed staged file, all managed JSON, conflict markers, permanent denies, shared package policy, machine-only preservation, and exact final-tree fingerprints. Secretlint scans the complete managed tree and exact candidate difference with its recommended preset. Scanner failures block PUBLISH. Reports contain only finding type, relative path, and line number.
 
 ## Runtime dependency decisions
 

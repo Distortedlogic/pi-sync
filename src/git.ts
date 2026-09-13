@@ -2,8 +2,9 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import writeFileAtomic from "write-file-atomic";
-import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
+import { createDefaultLocalPolicy, ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
 import { type InventoryFile, resolveManagedPath } from "./files.ts";
+import { type CandidateSecurityOptions, validateStagedCandidate } from "./security.ts";
 import type { RepositoryConfig } from "./types.ts";
 
 export type GitExec = ExtensionAPI["exec"];
@@ -313,6 +314,7 @@ export async function createCandidateCommit(options: {
 	planId: string;
 	currentSharedTree: Readonly<Record<string, Readonly<InventoryFile>>>;
 	finalSharedTree: Readonly<Record<string, Readonly<InventoryFile>>>;
+	validation?: Partial<CandidateSecurityOptions>;
 	signal?: AbortSignal;
 }): Promise<Readonly<CandidateCommit>> {
 	validatePlanId(options.planId);
@@ -370,6 +372,33 @@ export async function createCandidateCommit(options: {
 			signal: options.signal,
 		});
 	}
+	const candidateDiff = await executeGit(
+		options.exec,
+		candidateWorkspace,
+		["diff", "--cached", "--no-color", "--no-ext-diff", "--binary", options.snapshot.sharedCommit, "--"],
+		"Candidate diff creation",
+		{ signal: options.signal },
+	);
+	const stagedPathResult = await executeGit(
+		options.exec,
+		candidateWorkspace,
+		["ls-files", "-z"],
+		"Candidate path listing",
+		{ signal: options.signal },
+	);
+	await validateStagedCandidate({
+		stagedRoot: candidateDirectory,
+		stagedPaths: stagedPathResult.stdout.split("\0").filter(Boolean),
+		plannedFinalSharedTree: options.finalSharedTree,
+		candidateDiff: candidateDiff.stdout,
+		policy: options.validation?.policy ?? createDefaultLocalPolicy(),
+		managedPatterns: options.validation?.managedPatterns ?? Object.keys(options.finalSharedTree),
+		machineSettings: options.validation?.machineSettings,
+		limits: options.validation?.limits,
+		scannerFactory: options.validation?.scannerFactory,
+		scannerTimeoutMs: options.validation?.scannerTimeoutMs,
+		signal: options.signal,
+	});
 	await executeGit(
 		options.exec,
 		candidateWorkspace,

@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
+import stableStringify from "json-stable-stringify";
 import { afterEach, describe, expect, it } from "vitest";
 import { discoverFileInventory, type InventoryFile } from "../src/files.ts";
 import {
@@ -67,12 +68,15 @@ async function seedRepository(repositoryPath: string, parent: string): Promise<s
 
 function file(path: string, content: string): Readonly<InventoryFile> {
 	const bytes = Buffer.from(content, "utf8");
+	const canonical = path === "settings.json" ? stableStringify(JSON.parse(content)) : content;
+	if (canonical === undefined) throw new Error("Cannot create test file.");
+	const comparisonBytes = path === "settings.json" ? Buffer.from(canonical) : bytes;
 	const sha256 = createHash("sha256").update(bytes).digest("hex");
 	return Object.freeze({
 		path,
 		size: bytes.byteLength,
 		sha256,
-		comparisonSha256: sha256,
+		comparisonSha256: createHash("sha256").update(comparisonBytes).digest("hex"),
 		executable: false,
 		exactBytesBase64: bytes.toString("base64"),
 	});
