@@ -3,3 +3,5 @@ coverage/
 dist/
 *.log
 *.tgz
+PRELOAD.md
+TREE.txt
