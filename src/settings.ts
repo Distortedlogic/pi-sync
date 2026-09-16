@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { applyOperation, compare, getValueByPointer, type Operation } from "fast-json-patch";
+import jsonPatch, { type Operation } from "fast-json-patch";
 import stableStringify from "json-stable-stringify";
 import { getNodeValue, type Node as JsonNode, parseTree } from "jsonc-parser";
 import {
@@ -11,6 +11,8 @@ import {
 	planPackageChanges,
 } from "./packages.ts";
 import type { LocalPolicy } from "./types.ts";
+
+const { applyOperation, compare, getValueByPointer } = jsonPatch;
 
 export interface ParsedSettings {
 	canonicalText: string;
