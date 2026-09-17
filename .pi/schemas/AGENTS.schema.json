@@ -1,0 +1,110 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://distortedlogic.net/schemas/AGENTS.schema.json",
+	"title": "Pi AGENTS.yml configuration",
+	"type": "object",
+	"additionalProperties": true,
+	"properties": {
+		"pi": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["extensions"],
+			"properties": {
+				"extensions": {
+					"$ref": "#/$defs/extensions"
+				}
+			}
+		}
+	},
+	"$defs": {
+		"extensions": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"pi-context-preload": {
+					"$ref": "#/$defs/contextPreload"
+				},
+				"pi-modes": {
+					"$ref": "#/$defs/modes"
+				},
+				"pi-prompts": {
+					"$ref": "#/$defs/prompts"
+				}
+			}
+		},
+		"contextPreload": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"extends": {
+					"$ref": "#/$defs/stringList"
+				},
+				"files": {
+					"$ref": "#/$defs/stringList"
+				},
+				"contexts": {
+					"$ref": "#/$defs/stringList"
+				}
+			}
+		},
+		"modes": {
+			"type": "object",
+			"propertyNames": {
+				"pattern": ".*\\S.*"
+			},
+			"additionalProperties": {
+				"type": "string"
+			}
+		},
+		"prompts": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["prompts"],
+			"properties": {
+				"prompts": {
+					"type": "object",
+					"propertyNames": {
+						"minLength": 1
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/prompt"
+					}
+				},
+				"chains": {
+					"type": "object",
+					"propertyNames": {
+						"minLength": 1
+					},
+					"additionalProperties": {
+						"type": "array",
+						"minItems": 1,
+						"items": {
+							"type": "string",
+							"minLength": 1
+						}
+					}
+				}
+			}
+		},
+		"prompt": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["body"],
+			"properties": {
+				"description": {
+					"type": "string"
+				},
+				"body": {
+					"type": "string"
+				}
+			}
+		},
+		"stringList": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"minLength": 1
+			}
+		}
+	}
+}

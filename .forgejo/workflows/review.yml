@@ -1,0 +1,61 @@
+name: Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on:
+      - self-hosted
+      - pi-review
+    timeout-minutes: 30
+    steps:
+      - name: Check out protected base revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out pull request head as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .pi-review-head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Import pull request head commit
+        env:
+          REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags .pi-review-head "$REVIEW_HEAD_SHA"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.19.0"
+
+      - name: Install protected dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run protected review coordinator
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_COMMENT_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ github.server_url }}
+          FORGEJO_REPOSITORY: ${{ github.repository }}
+          REVIEW_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node --experimental-strip-types .forgejo/review.ts

@@ -1,0 +1,35 @@
+version: 1
+items:
+  - id: correctness
+    title: Correctness
+    files:
+      - "agents.ts"
+      - "src/**/*.{ts,tsx,js,jsx,py,rs,sh}"
+      - "package.json"
+      - "tsconfig.json"
+    prompt: Review the changed behavior for correctness, edge cases, error handling, and regressions.
+
+  - id: extension-api
+    title: Extension API behavior
+    files:
+      - "agents.ts"
+      - "src/**/*.ts"
+      - "package.json"
+      - "AGENTS.yml"
+    prompt: Review Pi lifecycle events, tool and command contracts, session behavior, trust checks, and provider interactions.
+
+  - id: tests
+    title: Tests
+    files:
+      - "agents.ts"
+      - "src/**/*.{ts,tsx,js,jsx,py,rs,sh}"
+      - "test/**/*.{ts,tsx,js,jsx,py,rs,sh}"
+      - "package.json"
+      - "tsconfig.json"
+    prompt: Review test coverage, assertions, failure paths, offline behavior, and the match between tests and changed behavior.
+
+  - id: security
+    title: Security
+    files:
+      - "**/*"
+    prompt: Review secrets, command execution, permissions, untrusted input, dependency changes, and unsafe network or file access.

@@ -1,0 +1,76 @@
+minimum_pre_commit_version: "3.2.0"
+default_stages:
+  - pre-commit
+
+repos:
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.5.14
+    hooks:
+      - id: biome-check
+        types: [text]
+        files: '\.(?:cjs|cts|js|jsx|json|jsonc|mjs|mts|ts|tsx)$'
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        types: [text]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        types: [file]
+      - id: check-case-conflict
+        types: [file]
+      - id: check-json
+        types: [json]
+      - id: check-merge-conflict
+        types: [text]
+      - id: check-toml
+        types: [toml]
+      - id: check-yaml
+        types: [yaml]
+      - id: detect-private-key
+        types: [text]
+      - id: end-of-file-fixer
+        types: [text]
+      - id: trailing-whitespace
+        types: [text]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.0
+    hooks:
+      - id: check-jsonschema
+        name: validate AGENTS.yml
+        args: [--schemafile, .pi/schemas/AGENTS.schema.json]
+        types: [yaml]
+        files: '^AGENTS\.yml$'
+      - id: check-jsonschema
+        name: validate Pi review policy
+        args: [--schemafile, .pi/schemas/review.schema.json]
+        types: [yaml]
+        files: '^\.pi/review\.yml$'
+      - id: check-github-workflows
+        name: validate Forgejo workflows
+        types: [yaml]
+        files: '^\.forgejo/workflows/[^/]+\.ya?ml$'
+
+  - repo: local
+    hooks:
+      - id: npm-typecheck
+        name: npm typecheck
+        entry: npm run typecheck
+        language: system
+        pass_filenames: false
+        types: [text]
+        files: '^(?:\.forgejo/.*\.ts|agents\.ts|package(?:-lock)?\.json|tsconfig\.json|src/.*\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)|test/.*\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx))$'
+        stages: [pre-push]
+      - id: npm-test
+        name: npm test
+        entry: npm test
+        language: system
+        pass_filenames: false
+        types: [text]
+        files: '^(?:\.forgejo/.*\.ts|agents\.ts|package(?:-lock)?\.json|src/.*\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)|test/.*\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx))$'
+        stages: [pre-push]

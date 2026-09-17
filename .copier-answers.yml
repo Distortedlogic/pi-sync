@@ -1,0 +1,5 @@
+_commit: 3735bd3
+_src_path: /home/entropybender/pi-extensions
+project_description: Synchronize Pi configuration between THIS MACHINE and a SHARED
+    REPOSITORY.
+project_name: pi-sync

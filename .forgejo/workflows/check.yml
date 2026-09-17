@@ -1,0 +1,59 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.19.0"
+          cache: npm
+
+      - name: Install pre-commit
+        run: python -m pip install pre-commit==4.6.2
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run npm checks
+        run: npm run check
+
+      - name: Verify offline Pi extension load
+        env:
+          PI_OFFLINE: "1"
+        run: npm run test:e2e
+
+      - name: Verify clean production package
+        run: |
+          archive="$(npm pack --silent)"
+          archive_path="$PWD/$archive"
+          package_name="$(node -p "require('./package.json').name")"
+          package_root="$RUNNER_TEMP/package-check"
+          mkdir -p "$package_root"
+          cd "$package_root"
+          npm init -y >/dev/null
+          npm install --omit=dev "$archive_path"
+          installed_dir="$package_root/node_modules/$package_name"
+          test -f "$installed_dir/package.json"
+          test -f "$installed_dir/src/index.ts"
+          test -f "$installed_dir/README.md"
+          PI_CODING_AGENT_DIR="$RUNNER_TEMP/pi-package-agent" PI_OFFLINE=1 npm exec -- pi --no-extensions --no-session --extension "$installed_dir/src/index.ts" --list-models
