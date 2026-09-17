@@ -622,7 +622,7 @@ async function shouldReload(ctx: ExtensionCommandContext, changed: boolean): Pro
 }
 
 function appendResult(pi: ExtensionAPI, data: Record<string, unknown>): void {
-	pi.appendEntry("config-sync-result", { schemaVersion: 1, ...data });
+	pi.appendEntry("pi-sync/result", { schemaVersion: 1, ...data });
 }
 
 async function executePreparedSync(options: {
