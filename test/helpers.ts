@@ -12,7 +12,7 @@ export interface TemporaryPath {
 }
 
 export async function createTemporaryAgentDirectory(): Promise<TemporaryPath> {
-	const path = await mkdtemp(join(tmpdir(), "pi-config-sync-agent-"));
+	const path = await mkdtemp(join(tmpdir(), "pi-sync-agent-"));
 	return {
 		path,
 		cleanup: () => rm(path, { force: true, recursive: true }),
@@ -20,7 +20,7 @@ export async function createTemporaryAgentDirectory(): Promise<TemporaryPath> {
 }
 
 export async function createTemporaryBareGitRepository(): Promise<TemporaryPath> {
-	const root = await mkdtemp(join(tmpdir(), "pi-config-sync-git-"));
+	const root = await mkdtemp(join(tmpdir(), "pi-sync-git-"));
 	const path = join(root, "shared.git");
 	const gitConfig = join(root, "gitconfig");
 	const templateDirectory = join(root, "git-template");

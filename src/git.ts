@@ -33,7 +33,7 @@ export type FetchSharedSnapshotResult =
 	| { status: "ready"; snapshot: Readonly<SharedSnapshot> }
 	| { status: "doctor"; doctor: Readonly<GitDoctorResult> };
 
-export const SHARED_MANIFEST_PATH = "pi-config-sync.json";
+export const SHARED_MANIFEST_PATH = "pi-sync.json";
 
 export interface SetupRepositoryInspection {
 	empty: boolean;
@@ -55,8 +55,8 @@ export type PublishCandidateResult =
 	| { status: "published"; publishedCommit: string }
 	| { status: "plan_expired"; message: "PLAN EXPIRED"; candidateCommit: string; currentSharedCommit: string };
 
-export const LAST_NAMED_SNAPSHOT_REF = "refs/pi-config-sync/snapshots/last-reviewed";
-const LAST_CANDIDATE_REF = "refs/pi-config-sync/candidates/last";
+export const LAST_NAMED_SNAPSHOT_REF = "refs/pi-sync/snapshots/last-reviewed";
+const LAST_CANDIDATE_REF = "refs/pi-sync/candidates/last";
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const COMMIT_PATTERN = /^[a-f0-9]{40,64}$/;
 const PLAN_ID_PATTERN = /^[a-f0-9]{64}$/;
@@ -301,7 +301,7 @@ export async function inspectSetupRepository(options: {
 	}
 	const sharedCommit = branchEntry[0];
 	validateCommit(sharedCommit, "Inspected SHARED REPOSITORY commit");
-	const setupRef = "refs/pi-config-sync/setup/inspected";
+	const setupRef = "refs/pi-sync/setup/inspected";
 	await executeGit(
 		options.exec,
 		workspace,
@@ -473,7 +473,7 @@ export async function createCandidateCommit(options: {
 	if (reviewedRefCommit !== options.snapshot.sharedCommit)
 		throw new GitOperationError("Reviewed snapshot no longer matches its named commit.");
 
-	const candidateRef = `refs/pi-config-sync/candidates/${options.planId}`;
+	const candidateRef = `refs/pi-sync/candidates/${options.planId}`;
 	const existingCandidate = await executeGit(
 		options.exec,
 		options.snapshot.workspace,
@@ -551,13 +551,13 @@ export async function createCandidateCommit(options: {
 			"-c",
 			"user.name=Pi Config Sync",
 			"-c",
-			"user.email=pi-config-sync@invalid.example",
+			"user.email=pi-sync@invalid.example",
 			"commit",
 			"--allow-empty",
 			"--no-gpg-sign",
 			"--no-verify",
 			"-m",
-			`pi-config-sync candidate ${options.planId.slice(0, 12)}`,
+			`pi-sync candidate ${options.planId.slice(0, 12)}`,
 		],
 		"Candidate commit creation",
 		{ signal: options.signal },

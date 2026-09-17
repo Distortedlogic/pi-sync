@@ -10,7 +10,7 @@ import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from 
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-describe("pi-config-sync foundation", () => {
+describe("pi-sync foundation", () => {
 	it("loads the extension and registers /config-sync", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 

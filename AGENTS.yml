@@ -1,4 +1,4 @@
-pi-context-preload:
+pi-preload:
   extends:
     - "pi-extension"
   files:

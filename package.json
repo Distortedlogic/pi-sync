@@ -1,5 +1,5 @@
 {
-  "name": "pi-config-sync",
+  "name": "pi-sync",
   "version": "0.1.0",
   "description": "Synchronize Pi configuration between THIS MACHINE and a SHARED REPOSITORY.",
   "type": "module",

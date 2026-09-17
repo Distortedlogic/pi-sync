@@ -460,7 +460,7 @@ export async function importLegacyMigration(options: {
 		loadConfig(options.agentDirectory),
 		loadState(options.agentDirectory),
 	]);
-	if (currentConfig || currentState) throw new Error("Migration will not replace existing pi-config-sync data.");
+	if (currentConfig || currentState) throw new Error("Migration will not replace existing pi-sync data.");
 	const policy = createDefaultLocalPolicy();
 	const config: ConfigDocument = {
 		policy: { ...policy, acceptedSharedScope: [...options.preview.sharedScope] },
