@@ -1,10 +1,9 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
-import * as vi from "jest-mock";
 import {
 	buildConflictSummaries,
 	CONFLICT_CHOICES,
@@ -82,23 +81,26 @@ describe("conflict review", () => {
 			machineTree: { "settings.json": machine },
 			sharedTree: { "settings.json": shared },
 		});
-		expect(summaries).toEqual([
+		assert.deepEqual(summaries, [
 			{
 				path: "settings.json",
 				machine: `THIS MACHINE: 7 bytes, SHA-256 ${machine.sha256}, executable no.`,
 				shared: `SHARED REPOSITORY: 6 bytes, SHA-256 ${shared.sha256}, executable no.`,
 			},
 		]);
-		const select = vi.fn(async (_title: string, _options: string[]) => CONFLICT_CHOICES[0].label);
+		const select = mock.fn(async (_title: string, _options: string[]) => CONFLICT_CHOICES[0].label);
 		const decisions = await collectConflictDecisions({
 			ctx: { hasUI: true, ui: { select } as unknown as ExtensionCommandContext["ui"] },
 			conflicts: summaries,
 		});
-		expect(select).toHaveBeenCalledWith(
-			expect.stringContaining(summaries[0].machine),
+		const selectionCall = select.mock.calls[0];
+		assert.ok(selectionCall);
+		assert.ok(String(selectionCall.arguments[0]).includes(summaries[0].machine));
+		assert.deepEqual(
+			selectionCall.arguments[1],
 			CONFLICT_CHOICES.map((choice) => choice.label),
 		);
-		expect(decisions).toEqual([decision("use_machine_both")]);
+		assert.deepEqual(decisions, [decision("use_machine_both")]);
 	});
 
 	for (const { choice, label } of CONFLICT_CHOICES) {
@@ -110,22 +112,24 @@ describe("conflict review", () => {
 				decisions: [selectedDecision],
 				rebuild: (decisions) => conflictPlan(decisions as PlanDecision[]),
 			});
-			expect(resolution.plan.planId).not.toBe(originalPlan.planId);
-			expect(resolution.plan.decisions).toContainEqual(selectedDecision);
-			expect(resolution.requiresNewPlan).toBe(true);
-			expect(resolution.stopped).toBe(choice === "keep_both_stop" || choice === "merge_workspace");
+			assert.notEqual(resolution.plan.planId, originalPlan.planId);
+			assert.deepEqual(resolution.plan.decisions, [selectedDecision]);
+			assert.equal(resolution.requiresNewPlan, true);
+			assert.equal(resolution.stopped, choice === "keep_both_stop" || choice === "merge_workspace");
 		});
 	}
 
 	it("rejects a rebuilt plan that does not contain each exact conflict choice", () => {
 		const originalPlan = conflictPlan();
-		expect(() =>
-			rebuildConflictPlan({
-				originalPlan,
-				decisions: [decision("use_shared_both")],
-				rebuild: () => conflictPlan(),
-			}),
-		).toThrow("new final plan");
+		assert.throws(
+			() =>
+				rebuildConflictPlan({
+					originalPlan,
+					decisions: [decision("use_shared_both")],
+					rebuild: () => conflictPlan(),
+				}),
+			/new final plan/,
+		);
 	});
 });
 
@@ -150,12 +154,12 @@ describe("separate merge workspace", () => {
 				machineTree: { "settings.json": machine },
 				sharedTree: { "settings.json": shared },
 			});
-			expect(result.requiresNewPlan).toBe(true);
-			expect(await readFile(join(result.path, "THIS_MACHINE", "settings.json"), "utf8")).toBe("machine");
-			expect(await readFile(join(result.path, "SHARED_REPOSITORY", "settings.json"), "utf8")).toBe("shared");
-			expect(await readFile(join(machineRoot, "settings.json"), "utf8")).toBe("machine");
-			expect(await readFile(join(sharedRoot, "settings.json"), "utf8")).toBe("shared");
-			await expect(
+			assert.equal(result.requiresNewPlan, true);
+			assert.equal(await readFile(join(result.path, "THIS_MACHINE", "settings.json"), "utf8"), "machine");
+			assert.equal(await readFile(join(result.path, "SHARED_REPOSITORY", "settings.json"), "utf8"), "shared");
+			assert.equal(await readFile(join(machineRoot, "settings.json"), "utf8"), "machine");
+			assert.equal(await readFile(join(sharedRoot, "settings.json"), "utf8"), "shared");
+			await assert.rejects(
 				createConflictMergeWorkspace({
 					agentDirectory,
 					plan: conflictPlan(),
@@ -163,7 +167,8 @@ describe("separate merge workspace", () => {
 					machineTree: { "settings.json": machine },
 					sharedTree: { "settings.json": shared },
 				}),
-			).rejects.toThrow("not replaced");
+				/not replaced/,
+			);
 		} finally {
 			await temporary.cleanup();
 		}

@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, it } from "node:test";
-import { expect } from "expect";
-import * as vi from "jest-mock";
+import { describe, it, mock } from "node:test";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import { discoverFileInventory } from "../src/files.ts";
 import {
@@ -40,7 +38,7 @@ async function validationInput(
 describe("staged final-tree validation", () => {
 	it("rejects a permanently denied staged path before candidate creation", async () => {
 		const temporary = await createTemporaryAgentDirectory();
-		const scannerFactory = vi.fn(CLEAN_SCANNER);
+		const scannerFactory = mock.fn(CLEAN_SCANNER);
 		try {
 			await writeFile(join(temporary.path, ".env"), "DENIED=value\n", "utf8");
 			const input = await validationInput(temporary.path, {
@@ -48,8 +46,8 @@ describe("staged final-tree validation", () => {
 				plannedFinalSharedTree: {},
 				scannerFactory,
 			});
-			await expect(validateStagedCandidate(input)).rejects.toThrow("Permanently denied path");
-			expect(scannerFactory).not.toHaveBeenCalled();
+			await assert.rejects(validateStagedCandidate(input), /Permanently denied path/);
+			assert.equal(scannerFactory.mock.callCount(), 0);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -67,8 +65,9 @@ describe("staged final-tree validation", () => {
 					sha256: "f".repeat(64),
 				},
 			};
-			await expect(validateStagedCandidate({ ...input, plannedFinalSharedTree: expected })).rejects.toThrow(
-				"does not match the immutable plan: settings.json",
+			await assert.rejects(
+				validateStagedCandidate({ ...input, plannedFinalSharedTree: expected }),
+				/does not match the immutable plan: settings\.json/,
 			);
 		} finally {
 			await temporary.cleanup();
@@ -80,10 +79,11 @@ describe("staged final-tree validation", () => {
 		const invalidJson = await createTemporaryAgentDirectory();
 		try {
 			await writeFile(join(conflict.path, "notes.txt"), "before\n<<<<<<< THIS MACHINE\nafter\n", "utf8");
-			await expect(validateStagedCandidate(await validationInput(conflict.path))).rejects.toThrow("conflict marker");
+			await assert.rejects(validateStagedCandidate(await validationInput(conflict.path)), /conflict marker/);
 			await writeFile(join(invalidJson.path, "theme.json"), "{invalid", "utf8");
-			await expect(validateStagedCandidate(await validationInput(invalidJson.path))).rejects.toThrow(
-				"Managed JSON is invalid: theme.json",
+			await assert.rejects(
+				validateStagedCandidate(await validationInput(invalidJson.path)),
+				/Managed JSON is invalid: theme\.json/,
 			);
 		} finally {
 			await Promise.all([conflict.cleanup(), invalidJson.cleanup()]);
@@ -95,7 +95,7 @@ describe("staged final-tree validation", () => {
 		const lostPolicy = await createTemporaryAgentDirectory();
 		try {
 			await writeFile(join(invalidPackage.path, "settings.json"), '{"packages":["npm:example@latest"]}', "utf8");
-			await expect(validateStagedCandidate(await validationInput(invalidPackage.path))).rejects.toThrow("not pinned");
+			await assert.rejects(validateStagedCandidate(await validationInput(invalidPackage.path)), /not pinned/);
 
 			await writeFile(join(lostPolicy.path, "settings.json"), "{}", "utf8");
 			const policy = { ...createDefaultLocalPolicy(), machineOnlySettings: ["/machine/value"] };
@@ -106,7 +106,7 @@ describe("staged final-tree validation", () => {
 					finalText: '{"machine":{"value":2}}',
 				},
 			});
-			await expect(validateStagedCandidate(input)).rejects.toThrow("Machine-only setting was not preserved");
+			await assert.rejects(validateStagedCandidate(input), /Machine-only setting was not preserved/);
 		} finally {
 			await Promise.all([invalidPackage.cleanup(), lostPolicy.cleanup()]);
 		}
@@ -166,8 +166,8 @@ describe("secret scanner failure handling", () => {
 					await validateStagedCandidate(input);
 					assert.fail("Expected scanner failure");
 				} catch (error) {
-					expect(error).toBeInstanceOf(SecretScannerFailure);
-					expect((error as SecretScannerFailure).phase).toBe(phase);
+					assert.ok(error instanceof SecretScannerFailure);
+					assert.equal(error.phase, phase);
 				}
 			} finally {
 				await temporary.cleanup();
@@ -205,12 +205,11 @@ describe("secret scanner failure handling", () => {
 				await validateStagedCandidate(input);
 				assert.fail("Expected secret finding");
 			} catch (error) {
-				expect(error).toBeInstanceOf(SecretFindingError);
-				const findingError = error as SecretFindingError;
-				expect(findingError.findings).toEqual([{ type: "@secretlint/example", path: "notes.txt", line: 2 }]);
-				expect(Object.keys(findingError.findings[0] ?? {}).sort()).toEqual(["line", "path", "type"]);
-				expect(JSON.stringify(findingError)).not.toContain(matchedValue);
-				expect(String(findingError)).not.toContain(matchedValue);
+				assert.ok(error instanceof SecretFindingError);
+				assert.deepEqual(error.findings, [{ type: "@secretlint/example", path: "notes.txt", line: 2 }]);
+				assert.deepEqual(Object.keys(error.findings[0] ?? {}).sort(), ["line", "path", "type"]);
+				assert.ok(!JSON.stringify(error).includes(matchedValue));
+				assert.ok(!String(error).includes(matchedValue));
 			}
 		} finally {
 			await temporary.cleanup();

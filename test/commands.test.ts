@@ -1,6 +1,6 @@
+import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
 import {
 	CONFIG_SYNC_SUBCOMMANDS,
 	deriveFooterStatus,
@@ -53,20 +53,20 @@ function plan(actions: PlanArtifactAction[]) {
 
 describe("configuration command routing", () => {
 	it("supports every required /config-sync form through one native command", () => {
-		expect(parseConfigSyncCommand("")).toEqual({ command: "status", arguments: [] });
+		assert.deepEqual(parseConfigSyncCommand(""), { command: "status", arguments: [] });
 		for (const command of CONFIG_SYNC_SUBCOMMANDS) {
-			expect(parseConfigSyncCommand(`${command} one two`)).toEqual({
+			assert.deepEqual(parseConfigSyncCommand(`${command} one two`), {
 				command,
 				arguments: ["one", "two"],
 			});
 		}
-		expect(() => parseConfigSyncCommand("unknown")).toThrow("Unknown /config-sync action");
+		assert.throws(() => parseConfigSyncCommand("unknown"), /Unknown \/config-sync action/);
 	});
 
 	it("uses only the fixed footer states", () => {
-		expect(deriveFooterStatus(plan([]))).toBe("Config sync: clean");
-		expect(deriveFooterStatus(plan([action()]))).toBe("Config sync: 1 to publish");
-		expect(
+		assert.equal(deriveFooterStatus(plan([])), "Config sync: clean");
+		assert.equal(deriveFooterStatus(plan([action()])), "Config sync: 1 to publish");
+		assert.equal(
 			deriveFooterStatus(
 				plan([
 					action({
@@ -76,8 +76,9 @@ describe("configuration command routing", () => {
 					}),
 				]),
 			),
-		).toBe("Config sync: 1 to apply");
-		expect(
+			"Config sync: 1 to apply",
+		);
+		assert.equal(
 			deriveFooterStatus(
 				plan([
 					action({
@@ -89,23 +90,24 @@ describe("configuration command routing", () => {
 					}),
 				]),
 			),
-		).toBe("Config sync: 1 conflicts");
+			"Config sync: 1 conflicts",
+		);
 	});
 
 	it("limits large plain-text difference output", () => {
 		const output = formatDifferenceOutput(`${"changed line\n".repeat(6_000)}`);
-		expect(Buffer.byteLength(output)).toBeLessThan(60 * 1024);
-		expect(output).toContain("Difference truncated");
+		assert.ok(Buffer.byteLength(output) < 60 * 1024);
+		assert.ok(output.includes("Difference truncated"));
 	});
 
 	it("invalidates late status generations on replacement or shutdown", () => {
 		const guard = new StatusGenerationGuard();
 		const first = guard.begin();
 		const second = guard.begin();
-		expect(guard.isCurrent(first)).toBe(false);
-		expect(guard.isCurrent(second)).toBe(true);
+		assert.equal(guard.isCurrent(first), false);
+		assert.equal(guard.isCurrent(second), true);
 		guard.invalidate();
-		expect(guard.isCurrent(second)).toBe(false);
+		assert.equal(guard.isCurrent(second), false);
 	});
 });
 
@@ -136,19 +138,20 @@ describe("configuration operation progress", () => {
 			operation: async (reporter) => {
 				reporter.update("APPLYING FILES", "Applying one confirmed file on THIS MACHINE");
 				reporter.stopping();
-				expect(reporter.signal.aborted).toBe(true);
-				expect(reporter.state()).toMatchObject({ cancellationState: "stopping", phase: "STOPPING" });
+				assert.equal(reporter.signal.aborted, true);
+				assert.equal(reporter.state().cancellationState, "stopping");
+				assert.equal(reporter.state().phase, "STOPPING");
 				await work;
 				settled = true;
 				return "done";
 			},
 		});
 		await Promise.resolve();
-		expect(settled).toBe(false);
-		expect(statuses.at(-1)).toContain("STOPPING");
+		assert.equal(settled, false);
+		assert.ok(statuses.at(-1)?.includes("STOPPING"));
 		releaseWork?.();
-		await expect(running).resolves.toBe("done");
-		expect(settled).toBe(true);
-		expect(statuses.at(-1)).toBeUndefined();
+		assert.equal(await running, "done");
+		assert.equal(settled, true);
+		assert.equal(statuses.at(-1), undefined);
 	});
 });

@@ -1,7 +1,6 @@
-import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { describe, it, mock } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
-import * as vi from "jest-mock";
 import {
 	type BuildPlanArtifactOptions,
 	buildPlanArtifact,
@@ -130,7 +129,7 @@ describe("plan and receipt formatting", () => {
 		const artifact = plan();
 		const planned = formatPlanRows(artifact, "final-plan").filter((row) => row.actionKey);
 		const receipt = formatPlanRows(artifact, "receipt").filter((row) => row.actionKey);
-		expect(receipt).toEqual(planned);
+		assert.deepEqual(receipt, planned);
 	});
 });
 
@@ -149,9 +148,9 @@ describe("plan review", () => {
 
 	it("collects every decision, rebuilds, shows RPC text, and requires the exact full ID", async () => {
 		let rebuilt: Readonly<PlanArtifact> | undefined;
-		const select = vi.fn(async (_title: string, choices: string[]) => choices[0]);
-		const input = vi.fn(async (_title: string, _placeholder?: string) => rebuilt?.planId);
-		const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>(
+		const select = mock.fn(async (_title: string, choices: string[]) => choices[0]);
+		const input = mock.fn(async (_title: string, _placeholder?: string) => rebuilt?.planId);
+		const rebuild = mock.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>(
 			(decisions) => {
 				rebuilt = plan({ decisions: decisions as PlanDecision[] });
 				return rebuilt;
@@ -163,22 +162,19 @@ describe("plan review", () => {
 			ui: { select, input } as unknown as ExtensionCommandContext["ui"],
 		});
 		const result = await reviewSyncPlan({ ctx, previewPlan: plan(), decisionRequirements: requirements, rebuild });
-		expect(result.status).toBe("confirmed");
-		expect(rebuild).toHaveBeenCalledTimes(1);
-		expect(rebuild.mock.calls[0]?.[0].map(({ category }) => category)).toEqual([
-			"policy",
-			"conflict",
-			"deletion",
-			"extension",
-			"package",
-		]);
-		expect(select).toHaveBeenCalledTimes(6);
-		expect(input).toHaveBeenCalledWith("Enter exact plan ID", rebuilt?.planId);
+		assert.equal(result.status, "confirmed");
+		assert.equal(rebuild.mock.callCount(), 1);
+		assert.deepEqual(
+			rebuild.mock.calls[0]?.arguments[0].map(({ category }) => category),
+			["policy", "conflict", "deletion", "extension", "package"],
+		);
+		assert.equal(select.mock.callCount(), 6);
+		assert.deepEqual(input.mock.calls[0]?.arguments, ["Enter exact plan ID", rebuilt?.planId]);
 	});
 
 	it("returns the immutable plan without UI or decision prompts", async () => {
 		for (const mode of ["print", "json"] as const) {
-			const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
+			const rebuild = mock.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
 			const previewPlan = plan();
 			const result = await reviewSyncPlan({
 				ctx: context({ mode }),
@@ -186,18 +182,18 @@ describe("plan review", () => {
 				decisionRequirements: requirements,
 				rebuild,
 			});
-			expect(result).toEqual({
+			assert.deepEqual(result, {
 				status: "plan_only",
 				plan: previewPlan,
 				text: formatPlanText(previewPlan, "final-plan"),
 			});
-			expect(rebuild).not.toHaveBeenCalled();
+			assert.equal(rebuild.mock.callCount(), 0);
 		}
 	});
 
 	it("requires the exact full plan ID for execution", () => {
 		const artifact = plan();
-		expect(() => authorizePlanExecution(artifact, artifact.shortPlanId)).toThrow("Exact plan ID");
-		expect(authorizePlanExecution(artifact, artifact.planId)).toEqual({ planId: artifact.planId });
+		assert.throws(() => authorizePlanExecution(artifact, artifact.shortPlanId), /Exact plan ID/);
+		assert.deepEqual(authorizePlanExecution(artifact, artifact.planId), { planId: artifact.planId });
 	});
 });

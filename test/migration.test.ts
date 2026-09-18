@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -5,7 +6,6 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
 import {
 	authorizeMigration,
 	buildMigrationPreview,
@@ -118,25 +118,23 @@ describe("legacy migration", () => {
 				homeDirectory: fixture.homeDirectory,
 				exec: gitExec(),
 			});
-			expect(preview).toMatchObject({
-				branch: "main",
-				deletionAllowed: true,
-				repositoryPath: shared.path,
-				status: "ready",
-			});
-			expect(Object.keys(preview.baseline?.files ?? {})).toEqual(["settings.json"]);
+			assert.equal(preview.branch, "main");
+			assert.equal(preview.deletionAllowed, true);
+			assert.equal(preview.repositoryPath, shared.path);
+			assert.equal(preview.status, "ready");
+			assert.deepEqual(Object.keys(preview.baseline?.files ?? {}), ["settings.json"]);
 
 			const result = await importLegacyMigration({
 				agentDirectory: fixture.agentDirectory,
 				preview,
 				authorization: authorizeMigration(preview, preview.migrationId),
 			});
-			expect(result).toEqual({ status: "success", requiredMode: "reconcile", deletionAllowed: true });
-			expect((await loadConfig(fixture.agentDirectory))?.repository).toEqual({
+			assert.deepEqual(result, { status: "success", requiredMode: "reconcile", deletionAllowed: true });
+			assert.deepEqual((await loadConfig(fixture.agentDirectory))?.repository, {
 				branch: "main",
 				repositoryPath: shared.path,
 			});
-			expect((await loadState(fixture.agentDirectory))?.baseline).toEqual(preview.baseline);
+			assert.deepEqual((await loadState(fixture.agentDirectory))?.baseline, preview.baseline);
 		} finally {
 			await Promise.all([root.cleanup(), shared.cleanup()]);
 		}
@@ -155,17 +153,17 @@ describe("legacy migration", () => {
 				homeDirectory: fixture.homeDirectory,
 				exec: gitExec(),
 			});
-			expect(preview.status).toBe("no_delete_reconcile");
-			expect(preview.requiredMode).toBe("reconcile");
-			expect(preview.deletionAllowed).toBe(false);
-			expect(preview.baseline).toBeNull();
+			assert.equal(preview.status, "no_delete_reconcile");
+			assert.equal(preview.requiredMode, "reconcile");
+			assert.equal(preview.deletionAllowed, false);
+			assert.equal(preview.baseline, null);
 			const result = await importLegacyMigration({
 				agentDirectory: fixture.agentDirectory,
 				preview,
 				authorization: authorizeMigration(preview, preview.migrationId),
 			});
-			expect(result.deletionAllowed).toBe(false);
-			expect((await loadState(fixture.agentDirectory))?.baseline).toBeNull();
+			assert.equal(result.deletionAllowed, false);
+			assert.equal((await loadState(fixture.agentDirectory))?.baseline, null);
 		} finally {
 			await Promise.all([root.cleanup(), shared.cleanup()]);
 		}

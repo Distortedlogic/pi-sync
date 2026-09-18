@@ -1,10 +1,9 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
-import * as vi from "jest-mock";
 import {
 	authorizeRestorePlan,
 	buildRestorePlan,
@@ -55,24 +54,26 @@ describe("recovery decisions", () => {
 			publishedCommit: "2".repeat(40),
 			stage: "backup_verified",
 		};
-		await expect(
-			requestRecoveryDecision({
+		assert.deepEqual(
+			await requestRecoveryDecision({
 				ctx: { hasUI: false, ui: {} as ExtensionCommandContext["ui"] },
 				recovery,
 			}),
-		).resolves.toEqual({ status: "decision_required", recovery });
+			{ status: "decision_required", recovery },
+		);
 
-		const select = vi.fn(async (_title: string, _options: string[]) => RECOVERY_CHOICES[1].label);
-		await expect(
-			requestRecoveryDecision({
+		const select = mock.fn(async (_title: string, _options: string[]) => RECOVERY_CHOICES[1].label);
+		assert.deepEqual(
+			await requestRecoveryDecision({
 				ctx: { hasUI: true, ui: { select } as unknown as ExtensionCommandContext["ui"] },
 				recovery,
 			}),
-		).resolves.toEqual({ status: "selected", recovery, choice: "rollback_machine" });
-		expect(select).toHaveBeenCalledWith(
+			{ status: "selected", recovery, choice: "rollback_machine" },
+		);
+		assert.deepEqual(select.mock.calls[0]?.arguments, [
 			recovery.message,
 			RECOVERY_CHOICES.map((choice) => choice.label),
-		);
+		]);
 	});
 });
 
@@ -89,18 +90,18 @@ describe("backup restore", () => {
 				backupId: metadata.backupId,
 				createdAt: "2026-01-02T00:00:00.000Z",
 			});
-			expect(plan.actions.map((action) => `${action.action}:${action.path}`)).toEqual([
-				"WRITE ON THIS MACHINE:a.txt",
-				"DELETE FROM THIS MACHINE:b.txt",
-			]);
-			expect(() => authorizeRestorePlan(plan, plan.shortPlanId)).toThrow("Exact restore plan ID");
-			const select = vi.fn(async () => "Enter exact restore plan ID");
-			const input = vi.fn(async () => plan.planId);
+			assert.deepEqual(
+				plan.actions.map((action) => `${action.action}:${action.path}`),
+				["WRITE ON THIS MACHINE:a.txt", "DELETE FROM THIS MACHINE:b.txt"],
+			);
+			assert.throws(() => authorizeRestorePlan(plan, plan.shortPlanId), /Exact restore plan ID/);
+			const select = mock.fn(async () => "Enter exact restore plan ID");
+			const input = mock.fn(async () => plan.planId);
 			const review = await reviewRestorePlan({
 				ctx: { hasUI: true, ui: { input, select } as unknown as ExtensionCommandContext["ui"] },
 				plan,
 			});
-			expect(review.status).toBe("confirmed");
+			assert.equal(review.status, "confirmed");
 			if (review.status !== "confirmed") return;
 			await executeRestorePlan({
 				agentDirectory,
@@ -108,8 +109,11 @@ describe("backup restore", () => {
 				plan,
 				authorization: review.authorization,
 			});
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("old");
-			await expect(readFile(join(machineRoot, "b.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old");
+			await assert.rejects(
+				readFile(join(machineRoot, "b.txt"), "utf8"),
+				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
+			);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -128,16 +132,17 @@ describe("backup restore", () => {
 				createdAt: "2026-01-02T00:00:00.000Z",
 			});
 			await writeFile(join(machineRoot, "a.txt"), "changed-after-review");
-			await expect(
+			await assert.rejects(
 				executeRestorePlan({
 					agentDirectory,
 					machineRoot,
 					plan,
 					authorization: authorizeRestorePlan(plan, plan.planId),
 				}),
-			).rejects.toBeInstanceOf(RestorePlanExpiredError);
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("changed-after-review");
-			expect(await readFile(join(machineRoot, "b.txt"), "utf8")).toBe("created");
+				RestorePlanExpiredError,
+			);
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "changed-after-review");
+			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "created");
 		} finally {
 			await temporary.cleanup();
 		}

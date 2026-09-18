@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export interface TemporaryPath {
+interface TemporaryPath {
 	path: string;
 	cleanup(): Promise<void>;
 }

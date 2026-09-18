@@ -1,7 +1,7 @@
+import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { expect } from "expect";
 import { assertNoPathCollisions, buildInventorySet, discoverFileInventory, resolveManagedPath } from "../src/files.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
@@ -16,15 +16,15 @@ describe("managed path safety", () => {
 	it("rejects path traversal", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {
-			expect(() => resolveManagedPath(temporary.path, "../outside")).toThrow("cannot contain '..'");
+			assert.throws(() => resolveManagedPath(temporary.path, "../outside"), /cannot contain '\.\.'/);
 		} finally {
 			await temporary.cleanup();
 		}
 	});
 
 	it("detects case and Unicode collisions before file reads", () => {
-		expect(() => assertNoPathCollisions(["skills/Rule.md", "skills/rule.md"])).toThrow("path collision");
-		expect(() => assertNoPathCollisions(["skills/é.md", "skills/é.md"])).toThrow("path collision");
+		assert.throws(() => assertNoPathCollisions(["skills/Rule.md", "skills/rule.md"]), /path collision/);
+		assert.throws(() => assertNoPathCollisions(["skills/é.md", "skills/é.md"]), /path collision/);
 	});
 
 	it("rejects root and managed-file symlinks", async () => {
@@ -34,11 +34,11 @@ describe("managed path safety", () => {
 			const roots = await createRoots(temporary.path);
 			const linkedRoot = join(temporary.path, "linked-machine");
 			await symlink(roots.machine, linkedRoot, "dir");
-			await expect(discoverFileInventory(linkedRoot, "machine")).rejects.toThrow("path component is a symlink");
+			await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /path component is a symlink/);
 
 			await writeFile(join(roots.shared, "target.json"), "{}", "utf8");
 			await symlink(join(roots.shared, "target.json"), join(roots.machine, "settings.json"));
-			await expect(discoverFileInventory(roots.machine, "machine")).rejects.toThrow("Managed path is a symlink");
+			await assert.rejects(discoverFileInventory(roots.machine, "machine"), /Managed path is a symlink/);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -64,10 +64,10 @@ describe("file inventory", () => {
 			});
 			const machine = inventories.machine.files["settings.json"];
 			const shared = inventories.shared.files["settings.json"];
-			expect(machine?.sha256).not.toBe(shared?.sha256);
-			expect(machine?.comparisonSha256).toBe(shared?.comparisonSha256);
-			expect(Buffer.from(machine?.exactBytesBase64 ?? "", "base64")).toEqual(machineBytes);
-			expect(Buffer.from(shared?.exactBytesBase64 ?? "", "base64")).toEqual(sharedBytes);
+			assert.notEqual(machine?.sha256, shared?.sha256);
+			assert.equal(machine?.comparisonSha256, shared?.comparisonSha256);
+			assert.deepEqual(Buffer.from(machine?.exactBytesBase64 ?? "", "base64"), machineBytes);
+			assert.deepEqual(Buffer.from(shared?.exactBytesBase64 ?? "", "base64"), sharedBytes);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -78,9 +78,10 @@ describe("file inventory", () => {
 		try {
 			const roots = await createRoots(temporary.path);
 			await mkdir(join(roots.machine, "extensions", "nested", ".git"), { recursive: true });
-			await expect(
+			await assert.rejects(
 				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["extensions/**"] }),
-			).rejects.toThrow("Nested Git repository");
+				/Nested Git repository/,
+			);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -92,8 +93,9 @@ describe("file inventory", () => {
 			const roots = await createRoots(temporary.path);
 			const path = join(roots.machine, "settings.json");
 			await writeFile(path, '{"large":true}', "utf8");
-			await expect(discoverFileInventory(roots.machine, "machine", { limits: { maxFileBytes: 4 } })).rejects.toThrow(
-				"settings.json",
+			await assert.rejects(
+				discoverFileInventory(roots.machine, "machine", { limits: { maxFileBytes: 4 } }),
+				/settings\.json/,
 			);
 		} finally {
 			await temporary.cleanup();
@@ -108,14 +110,15 @@ describe("file inventory", () => {
 				writeFile(join(roots.machine, "settings.json"), "{}", "utf8"),
 				writeFile(join(roots.shared, "settings.json"), "{}", "utf8"),
 			]);
-			await expect(
+			await assert.rejects(
 				buildInventorySet({
 					machineRoot: roots.machine,
 					sharedRoot: roots.shared,
 					baseline: null,
 					limits: { maxFileBytes: 10, maxTotalBytes: 3 },
 				}),
-			).rejects.toThrow("SHARED REPOSITORY causes managed files");
+				/SHARED REPOSITORY causes managed files/,
+			);
 		} finally {
 			await temporary.cleanup();
 		}

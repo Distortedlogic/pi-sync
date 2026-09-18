@@ -1,5 +1,5 @@
+import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { expect } from "expect";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import {
 	applyPackageDecisions,
@@ -7,7 +7,7 @@ import {
 	parsePackageDeclarations,
 	planPackageChanges,
 } from "../src/packages.ts";
-import { createApplySettingsPlan, parseSettings, SettingsPlanError } from "../src/settings.ts";
+import { createApplySettingsPlan, parseSettings } from "../src/settings.ts";
 import type { LocalPolicy } from "../src/types.ts";
 
 function policy(overrides: Partial<LocalPolicy> = {}): LocalPolicy {
@@ -16,34 +16,44 @@ function policy(overrides: Partial<LocalPolicy> = {}): LocalPolicy {
 
 describe("settings parsing", () => {
 	it("requires strict JSON objects and package declarations", () => {
-		expect(() => parseSettings("[]", { source: "machine", policy: policy() })).toThrow("one JSON object");
-		expect(() => parseSettings('{"theme":"dark","theme":"light"}', { source: "machine", policy: policy() })).toThrow(
-			new SettingsPlanError("Duplicate JSON property at /theme."),
+		assert.throws(() => parseSettings("[]", { source: "machine", policy: policy() }), /one JSON object/);
+		assert.throws(
+			() => parseSettings('{"theme":"dark","theme":"light"}', { source: "machine", policy: policy() }),
+			/Duplicate JSON property at \/theme/,
 		);
-		expect(() =>
-			parseSettings('{"packages":["npm:example@1.0.0",{"source":"npm:example@2.0.0"}]}', {
-				source: "machine",
-				policy: policy(),
-			}),
-		).toThrow("Duplicate package declaration");
-		expect(() => parseSettings('{"packages":[{"source":2}]}', { source: "machine", policy: policy() })).toThrow(
-			"Invalid package declaration",
+		assert.throws(
+			() =>
+				parseSettings('{"packages":["npm:example@1.0.0",{"source":"npm:example@2.0.0"}]}', {
+					source: "machine",
+					policy: policy(),
+				}),
+			/Duplicate package declaration/,
+		);
+		assert.throws(
+			() => parseSettings('{"packages":[{"source":2}]}', { source: "machine", policy: policy() }),
+			/Invalid package declaration/,
 		);
 	});
 
 	it("requires approved shared schemes and pinned package sources", () => {
-		expect(() => parseSettings('{"packages":["file:../private"]}', { source: "shared", policy: policy() })).toThrow(
-			"scheme is not approved",
+		assert.throws(
+			() => parseSettings('{"packages":["file:../private"]}', { source: "shared", policy: policy() }),
+			/scheme is not approved/,
 		);
-		expect(() => parseSettings('{"packages":["npm:example@latest"]}', { source: "shared", policy: policy() })).toThrow(
-			"not pinned",
+		assert.throws(
+			() => parseSettings('{"packages":["npm:example@latest"]}', { source: "shared", policy: policy() }),
+			/not pinned/,
 		);
-		expect(() =>
-			parseSettings('{"packages":["git:github.com/example/tool"]}', { source: "shared", policy: policy() }),
-		).toThrow("not pinned");
-		expect(() =>
-			parseSettings('{"packages":["git:github.com/example/tool@v1.2.3"]}', { source: "shared", policy: policy() }),
-		).not.toThrow();
+		assert.throws(
+			() => parseSettings('{"packages":["git:github.com/example/tool"]}', { source: "shared", policy: policy() }),
+			/not pinned/,
+		);
+		assert.doesNotThrow(() =>
+			parseSettings('{"packages":["git:github.com/example/tool@v1.2.3"]}', {
+				source: "shared",
+				policy: policy(),
+			}),
+		);
 	});
 });
 
@@ -59,37 +69,43 @@ describe("package planning", () => {
 		);
 		const first = { operation: "install" as const, exactSource: "npm:first@1.0.0", approved: true };
 		const second = { operation: "install" as const, exactSource: "npm:second@1.0.0", approved: true };
-		expect(() => applyPackageDecisions(plan, [first])).toThrow("Missing exact package decision");
-		expect(() => applyPackageDecisions(plan, [first, first])).toThrow("Duplicate package decision");
-		expect(() =>
-			applyPackageDecisions(plan, [first, { ...second, exactSource: "npm:second@2.0.0" }]),
-		).toThrow(PackagePlanError);
-		expect(() =>
-			applyPackageDecisions(plan, [
-				first,
-				second,
-				{ operation: "install", exactSource: "npm:extra@1.0.0", approved: true },
-			]),
-		).toThrow("do not match");
+		assert.throws(() => applyPackageDecisions(plan, [first]), /Missing exact package decision/);
+		assert.throws(() => applyPackageDecisions(plan, [first, first]), /Duplicate package decision/);
+		assert.throws(
+			() => applyPackageDecisions(plan, [first, { ...second, exactSource: "npm:second@2.0.0" }]),
+			PackagePlanError,
+		);
+		assert.throws(
+			() =>
+				applyPackageDecisions(plan, [
+					first,
+					second,
+					{ operation: "install", exactSource: "npm:extra@1.0.0", approved: true },
+				]),
+			/do not match/,
+		);
 
 		const decided = applyPackageDecisions(plan, [first, second]);
-		expect(decided.actions.map(({ exactSource, normalizedSource, decision }) => ({
-			exactSource,
-			normalizedSource,
-			decision,
-		}))).toEqual([
-			{
-				exactSource: "npm:first@1.0.0",
-				normalizedSource: "npm:first@1.0.0",
-				decision: "approved",
-			},
-			{
-				exactSource: "npm:second@1.0.0",
-				normalizedSource: "npm:second@1.0.0",
-				decision: "approved",
-			},
-		]);
-		expect(Object.isFrozen(decided.actions)).toBe(true);
+		assert.deepEqual(
+			decided.actions.map(({ exactSource, normalizedSource, decision }) => ({
+				exactSource,
+				normalizedSource,
+				decision,
+			})),
+			[
+				{
+					exactSource: "npm:first@1.0.0",
+					normalizedSource: "npm:first@1.0.0",
+					decision: "approved",
+				},
+				{
+					exactSource: "npm:second@1.0.0",
+					normalizedSource: "npm:second@1.0.0",
+					decision: "approved",
+				},
+			],
+		);
+		assert.equal(Object.isFrozen(decided.actions), true);
 	});
 });
 
@@ -123,19 +139,21 @@ describe("APPLY settings plan", () => {
 			],
 		});
 		const finalSettings = JSON.parse(plan.finalSettingsText) as Record<string, unknown>;
-		expect(finalSettings).toMatchObject({ theme: "light", environment: { token: "machine-value" } });
-		expect(finalSettings.packages).toEqual([
-			"file:../private",
-			"npm:example@2.0.0",
-			machineTool,
-			"npm:new@1.0.0",
-		]);
-		expect(plan.preservedMachineSettings.map(({ pointer }) => pointer)).toEqual(["/environment/token"]);
-		expect(plan.settingChanges.map(({ pointer }) => pointer)).toEqual(["/theme"]);
-		expect(plan.preservedMachinePackageSources).toEqual([
+		assert.equal(finalSettings.theme, "light");
+		assert.deepEqual(finalSettings.environment, { token: "machine-value" });
+		assert.deepEqual(finalSettings.packages, ["file:../private", "npm:example@2.0.0", machineTool, "npm:new@1.0.0"]);
+		assert.deepEqual(
+			plan.preservedMachineSettings.map(({ pointer }) => pointer),
+			["/environment/token"],
+		);
+		assert.deepEqual(
+			plan.settingChanges.map(({ pointer }) => pointer),
+			["/theme"],
+		);
+		assert.deepEqual(plan.preservedMachinePackageSources, [
 			{ exactSource: "file:../private", normalizedSource: "file:../private" },
 			{ exactSource: machineTool, normalizedSource: machineTool },
 		]);
-		expect(plan.packageExecutionApproved).toBe(true);
+		assert.equal(plan.packageExecutionApproved, true);
 	});
 });

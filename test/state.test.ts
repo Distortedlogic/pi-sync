@@ -1,6 +1,6 @@
+import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { expect } from "expect";
 import {
 	createDefaultLocalPolicy,
 	DEFAULT_MANAGED_SCOPE,
@@ -58,8 +58,8 @@ describe("configuration storage", () => {
 			await saveState(agentDirectory.path, state("machine-one"));
 			await writeFile(paths.stateFile, "{not-json", "utf8");
 
-			await expect(loadState(agentDirectory.path)).rejects.toBeInstanceOf(RecoveryRequiredError);
-			expect(await readFile(paths.stateFile, "utf8")).toBe("{not-json");
+			await assert.rejects(loadState(agentDirectory.path), RecoveryRequiredError);
+			assert.equal(await readFile(paths.stateFile, "utf8"), "{not-json");
 		} finally {
 			await agentDirectory.cleanup();
 		}
@@ -71,7 +71,7 @@ describe("configuration storage", () => {
 			const paths = await ensureConfigSyncDirectories(agentDirectory.path);
 			await writeFile(paths.stateFile, JSON.stringify({ ...state("machine-one"), schemaVersion: 2 }), "utf8");
 
-			await expect(loadState(agentDirectory.path)).rejects.toThrow("No migration was attempted");
+			await assert.rejects(loadState(agentDirectory.path), /No migration was attempted/);
 		} finally {
 			await agentDirectory.cleanup();
 		}
@@ -128,10 +128,10 @@ describe("configuration storage", () => {
 			await saveJournal(agentDirectory.path, journal);
 			await saveBackupMetadata(agentDirectory.path, backup);
 
-			expect(await loadConfig(agentDirectory.path)).toEqual(configuration);
-			expect(await loadPlanArtifact(agentDirectory.path, FIRST_PLAN_ID)).toEqual(plan);
-			expect(await loadJournal(agentDirectory.path)).toEqual(journal);
-			expect(await loadBackupMetadata(agentDirectory.path, "backup-one")).toEqual(backup);
+			assert.deepEqual(await loadConfig(agentDirectory.path), configuration);
+			assert.deepEqual(await loadPlanArtifact(agentDirectory.path, FIRST_PLAN_ID), plan);
+			assert.deepEqual(await loadJournal(agentDirectory.path), journal);
+			assert.deepEqual(await loadBackupMetadata(agentDirectory.path, "backup-one"), backup);
 		} finally {
 			await agentDirectory.cleanup();
 		}
@@ -141,7 +141,7 @@ describe("configuration storage", () => {
 describe("managed scope", () => {
 	it("excludes models.json from the default managed scope", () => {
 		const paths = resolveEffectivePaths(["models.json", "settings.json"], ["**/*"], DEFAULT_MANAGED_SCOPE);
-		expect(paths).toEqual(["settings.json"]);
+		assert.deepEqual(paths, ["settings.json"]);
 	});
 
 	it("always applies permanent deny rules", () => {
@@ -153,7 +153,7 @@ describe("managed scope", () => {
 			"npm/package/index.js",
 			"sessions/a.jsonl",
 		];
-		for (const path of denied) expect(isPermanentlyDenied(path)).toBe(true);
-		expect(resolveEffectivePaths(["settings.json", ...denied], ["**/*"], ["**/*"])).toEqual(["settings.json"]);
+		for (const path of denied) assert.equal(isPermanentlyDenied(path), true);
+		assert.deepEqual(resolveEffectivePaths(["settings.json", ...denied], ["**/*"], ["**/*"]), ["settings.json"]);
 	});
 });

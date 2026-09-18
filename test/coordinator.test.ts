@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { expect } from "expect";
-import * as vi from "jest-mock";
+import { describe, it, mock } from "node:test";
 import {
 	executeConfirmedTransaction,
 	TransactionLockedError,
@@ -198,7 +196,7 @@ describe("transaction coordinator", () => {
 				plan,
 				steps: createSteps(plan, events),
 			});
-			expect(events).toEqual([
+			assert.deepEqual(events, [
 				"fetch_and_revalidate",
 				"candidate_validated",
 				"shared_published",
@@ -207,14 +205,14 @@ describe("transaction coordinator", () => {
 				"packages_applied",
 				"final_verified",
 			]);
-			expect(result.status).toBe("success");
-			expect(result.journal.stage).toBe("complete");
-			expect(result.receipt.completedActionIds).toHaveLength(plan.actions.length);
-			for (const path of plan.actions.map((entry) => entry.path)) expect(result.receipt.text).toContain(path);
+			assert.equal(result.status, "success");
+			assert.equal(result.journal.stage, "complete");
+			assert.equal(result.receipt.completedActionIds.length, plan.actions.length);
+			for (const path of plan.actions.map((entry) => entry.path)) assert.ok(result.receipt.text.includes(path));
 			const state = await loadState(temporary.path);
-			expect(state?.baseline).toEqual({ commit: CANDIDATE, files: plan.finalSharedTree });
-			expect(state?.pendingOperation).toBeNull();
-			expect((await loadJournal(temporary.path))?.stage).toBe("complete");
+			assert.deepEqual(state?.baseline, { commit: CANDIDATE, files: plan.finalSharedTree });
+			assert.equal(state?.pendingOperation, null);
+			assert.equal((await loadJournal(temporary.path))?.stage, "complete");
 		} finally {
 			await temporary.cleanup();
 		}
@@ -238,19 +236,20 @@ describe("transaction coordinator", () => {
 				return plan;
 			},
 		});
-		const secondFetch = vi.fn(async () => plan);
+		const secondFetch = mock.fn(async () => plan);
 		try {
 			await prepare(temporary.path, plan);
 			const first = execute({ agentDirectory: temporary.path, plan, steps: firstSteps });
 			await fetchStarted;
-			await expect(
+			await assert.rejects(
 				execute({
 					agentDirectory: temporary.path,
 					plan,
 					steps: createSteps(plan, [], { fetchAndRebuildPlan: secondFetch }),
 				}),
-			).rejects.toBeInstanceOf(TransactionLockedError);
-			expect(secondFetch).not.toHaveBeenCalled();
+				TransactionLockedError,
+			);
+			assert.equal(secondFetch.mock.callCount(), 0);
 			releaseFetch?.();
 			await first;
 		} finally {
@@ -273,16 +272,17 @@ describe("transaction coordinator", () => {
 			const events: string[] = [];
 			try {
 				await prepare(temporary.path, plan);
-				await expect(
+				await assert.rejects(
 					execute({
 						agentDirectory: temporary.path,
 						plan,
 						steps: createSteps(plan, events, { fetchAndRebuildPlan: async () => stale }),
 					}),
-				).rejects.toBeInstanceOf(TransactionPlanExpiredError);
-				expect(events).toEqual([]);
-				expect(await loadJournal(temporary.path)).toBeUndefined();
-				expect((await loadState(temporary.path))?.pendingOperation).toBeNull();
+					TransactionPlanExpiredError,
+				);
+				assert.deepEqual(events, []);
+				assert.equal(await loadJournal(temporary.path), undefined);
+				assert.equal((await loadState(temporary.path))?.pendingOperation, null);
 			} finally {
 				await temporary.cleanup();
 			}
@@ -295,7 +295,7 @@ describe("transaction coordinator", () => {
 		const events: string[] = [];
 		try {
 			await prepare(temporary.path, plan);
-			await expect(
+			await assert.rejects(
 				execute({
 					agentDirectory: temporary.path,
 					plan,
@@ -305,10 +305,11 @@ describe("transaction coordinator", () => {
 						},
 					}),
 				}),
-			).rejects.toThrow("PUBLISH failed");
-			expect(events).toEqual(["fetch_and_revalidate", "candidate_validated"]);
-			expect((await loadJournal(temporary.path))?.stage).toBe("candidate_created");
-			expect((await loadState(temporary.path))?.pendingOperation).toBeNull();
+				/PUBLISH failed/,
+			);
+			assert.deepEqual(events, ["fetch_and_revalidate", "candidate_validated"]);
+			assert.equal((await loadJournal(temporary.path))?.stage, "candidate_created");
+			assert.equal((await loadState(temporary.path))?.pendingOperation, null);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -336,11 +337,11 @@ describe("transaction coordinator", () => {
 			} catch (error) {
 				failure = error as TransactionRecoveryRequiredError;
 			}
-			expect(failure).toBeInstanceOf(TransactionRecoveryRequiredError);
-			expect(failure?.restored).toBe(true);
-			expect(events.at(-1)).toBe("machine_restored");
-			expect((await loadJournal(temporary.path))?.stage).toBe("backup_verified");
-			expect((await loadState(temporary.path))?.pendingOperation).toEqual({
+			assert.ok(failure instanceof TransactionRecoveryRequiredError);
+			assert.equal(failure.restored, true);
+			assert.equal(events.at(-1), "machine_restored");
+			assert.equal((await loadJournal(temporary.path))?.stage, "backup_verified");
+			assert.deepEqual((await loadState(temporary.path))?.pendingOperation, {
 				kind: "pending_apply",
 				planId: plan.planId,
 				publishedCommit: CANDIDATE,
@@ -354,17 +355,18 @@ describe("transaction coordinator", () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const plan = createPlan();
 		const events: string[] = [];
-		const writeState = vi.fn(async () => {
+		const writeState = mock.fn(async () => {
 			throw new Error("injected state write failure");
 		});
 		try {
 			await prepare(temporary.path, plan);
-			await expect(
+			await assert.rejects(
 				execute({ agentDirectory: temporary.path, plan, steps: createSteps(plan, events), writeState }),
-			).rejects.toBeInstanceOf(TransactionRecoveryRequiredError);
-			expect((await loadJournal(temporary.path))?.stage).toBe("final_verified");
-			expect(events).not.toContain("machine_restored");
-			expect((await loadState(temporary.path))?.baseline).toBeNull();
+				TransactionRecoveryRequiredError,
+			);
+			assert.equal((await loadJournal(temporary.path))?.stage, "final_verified");
+			assert.ok(!events.includes("machine_restored"));
+			assert.equal((await loadState(temporary.path))?.baseline, null);
 		} finally {
 			await temporary.cleanup();
 		}

@@ -1,5 +1,5 @@
+import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { expect } from "expect";
 import type { FileInventory, InventoryFile } from "../src/files.ts";
 import {
 	type BuildPlanArtifactOptions,
@@ -171,10 +171,10 @@ describe("three-way classifier", () => {
 	for (const { name, baseline, machine, shared, expected } of TRUTH_TABLE) {
 		it(`classifies ${name}`, () => {
 			const action = classifyFile(PATH, baseline, machine, shared);
-			expect(action?.action).toBe(expected);
+			assert.equal(action?.action, expected);
 			if (action) {
-				expect(action.reason.length).toBeGreaterThan(0);
-				expect(action.finalResult.length).toBeGreaterThan(0);
+				assert.ok(action.reason.length > 0);
+				assert.ok(action.finalResult.length > 0);
 			}
 		});
 	}
@@ -183,8 +183,8 @@ describe("three-way classifier", () => {
 		const machine = file(4, 5);
 		const shared = file(4, 6);
 		const action = classifyFile(PATH, undefined, machine, shared);
-		expect(machine.sha256).not.toBe(shared.sha256);
-		expect(action?.action).toBe("UPDATE BASELINE ONLY");
+		assert.notEqual(machine.sha256, shared.sha256);
+		assert.equal(action?.action, "UPDATE BASELINE ONLY");
 	});
 
 	it("sorts actions by risk and then path", () => {
@@ -197,49 +197,45 @@ describe("three-way classifier", () => {
 			{ path: "z", risk: "package" as const },
 			{ path: "z", risk: "policy" as const },
 		]);
-		expect(sorted.map(({ risk, path }) => `${risk}:${path}`)).toEqual([
-			"policy:z",
-			"package:z",
-			"conflict:z",
-			"deletion:z",
-			"write:a",
-			"write:b",
-			"baseline:z",
-		]);
+		assert.deepEqual(
+			sorted.map(({ risk, path }) => `${risk}:${path}`),
+			["policy:z", "package:z", "conflict:z", "deletion:z", "write:a", "write:b", "baseline:z"],
+		);
 	});
 });
 
 describe("canonical plan artifact", () => {
 	it("changes its full ID when an immutable security field changes", () => {
 		const first = buildPlanArtifact(artifactOptions());
-		const changed = buildPlanArtifact(
-			artifactOptions({ actions: [artifactAction({ resultSha256: "f".repeat(64) })] }),
-		);
+		const changed = buildPlanArtifact(artifactOptions({ actions: [artifactAction({ resultSha256: "f".repeat(64) })] }));
 
-		expect(first.planId).toMatch(/^[a-f0-9]{64}$/);
-		expect(first.shortPlanId).toBe(first.planId.slice(0, 12));
-		expect(changed.planId).not.toBe(first.planId);
-		expect(Object.isFrozen(first)).toBe(true);
-		expect(Object.isFrozen(first.actions)).toBe(true);
+		assert.match(first.planId, /^[a-f0-9]{64}$/);
+		assert.equal(first.shortPlanId, first.planId.slice(0, 12));
+		assert.notEqual(changed.planId, first.planId);
+		assert.equal(Object.isFrozen(first), true);
+		assert.equal(Object.isFrozen(first.actions), true);
 	});
 
 	it("rejects a write with a destination that does not match its direction or name", () => {
-		expect(() =>
-			buildPlanArtifact(artifactOptions({ actions: [artifactAction({ destination: "THIS MACHINE" })] })),
-		).toThrow("wrong destination");
-		expect(() =>
-			buildPlanArtifact(
-				artifactOptions({
-					actions: [
-						artifactAction({
-							destination: "BASELINE",
-							direction: "baseline-only",
-							risk: "baseline",
-						}),
-					],
-				}),
-			),
-		).toThrow("name has the wrong destination");
+		assert.throws(
+			() => buildPlanArtifact(artifactOptions({ actions: [artifactAction({ destination: "THIS MACHINE" })] })),
+			/wrong destination/,
+		);
+		assert.throws(
+			() =>
+				buildPlanArtifact(
+					artifactOptions({
+						actions: [
+							artifactAction({
+								destination: "BASELINE",
+								direction: "baseline-only",
+								risk: "baseline",
+							}),
+						],
+					}),
+				),
+			/name has the wrong destination/,
+		);
 	});
 });
 
@@ -256,8 +252,8 @@ describe("mode plans", () => {
 				shared: inventory("shared", [selected.shared]),
 				baseline: inventory("baseline", [1]),
 			});
-			expect(plan.blocked).toBe(true);
-			expect(plan.blockers[0]).toContain(selected.blocker);
+			assert.equal(plan.blocked, true);
+			assert.ok(plan.blockers[0]?.includes(selected.blocker));
 		}
 	});
 
@@ -268,21 +264,21 @@ describe("mode plans", () => {
 			shared: inventory("shared", [1, 3]),
 			baseline: inventory("baseline", [1, 1]),
 		});
-		expect(plan.blocked).toBe(false);
-		expect(plan.actions.map((action) => action.action)).toEqual([
-			"WRITE IN SHARED REPOSITORY",
-			"WRITE ON THIS MACHINE",
-		]);
-		expect(plan.finalSharedTree["path-0.txt"]?.comparisonSha256).toBe(file(2).comparisonSha256);
-		expect(plan.finalMachineTree["path-1.txt"]?.comparisonSha256).toBe(file(3).comparisonSha256);
+		assert.equal(plan.blocked, false);
+		assert.deepEqual(
+			plan.actions.map((action) => action.action),
+			["WRITE IN SHARED REPOSITORY", "WRITE ON THIS MACHINE"],
+		);
+		assert.equal(plan.finalSharedTree["path-0.txt"]?.comparisonSha256, file(2).comparisonSha256);
+		assert.equal(plan.finalMachineTree["path-1.txt"]?.comparisonSha256, file(3).comparisonSha256);
 	});
 
 	it("makes no tree change when a conflict blocks the plan", () => {
 		const machine = inventory("machine", [2]);
 		const shared = inventory("shared", [3]);
 		const plan = createSyncPlan({ mode: "reconcile", machine, shared, baseline: inventory("baseline", [1]) });
-		expect(plan.blocked).toBe(true);
-		expect(plan.finalMachineTree).toEqual(machine.files);
-		expect(plan.finalSharedTree).toEqual(shared.files);
+		assert.equal(plan.blocked, true);
+		assert.deepEqual(plan.finalMachineTree, machine.files);
+		assert.deepEqual(plan.finalSharedTree, shared.files);
 	});
 });

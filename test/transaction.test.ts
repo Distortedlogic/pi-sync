@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { describe, it } from "node:test";
-import { expect } from "expect";
 import type { InventoryFile } from "../src/files.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
 import { getBackupMetadataPath } from "../src/state.ts";
@@ -145,11 +144,10 @@ describe("machine apply", () => {
 		try {
 			await writeTree(machineRoot, current);
 			const selectedApplySet = applySet(current, final);
-			expect(selectedApplySet.operations.map(({ kind, path }) => `${kind}:${path}`)).toEqual([
-				"write:a.txt",
-				"delete:b.txt",
-				"write:c.txt",
-			]);
+			assert.deepEqual(
+				selectedApplySet.operations.map(({ kind, path }) => `${kind}:${path}`),
+				["write:a.txt", "delete:b.txt", "write:c.txt"],
+			);
 			const result = await applyMachinePlan({
 				agentDirectory,
 				machineRoot,
@@ -157,19 +155,24 @@ describe("machine apply", () => {
 				createdAt: "2026-01-01T00:00:00.000Z",
 				applySet: selectedApplySet,
 			});
-			expect(result).toMatchObject({ status: "success", backupId: "backup-complete" });
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("new-a");
-			await expect(readFile(join(machineRoot, "b.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-			expect(await readFile(join(machineRoot, "c.txt"), "utf8")).toBe("new-c");
+			assert.equal(result.status, "success");
+			assert.equal(result.backupId, "backup-complete");
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "new-a");
+			await assert.rejects(
+				readFile(join(machineRoot, "b.txt"), "utf8"),
+				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
+			);
+			assert.equal(await readFile(join(machineRoot, "c.txt"), "utf8"), "new-c");
 			const metadata = await verifyBackup({ agentDirectory, backupId: "backup-complete" });
-			expect(metadata.entries).toEqual([
+			assert.deepEqual(metadata.entries, [
 				{ executable: false, existed: true, path: "a.txt", sha256: current["a.txt"].sha256 },
 				{ executable: false, existed: true, path: "b.txt", sha256: current["b.txt"].sha256 },
 				{ executable: null, existed: false, path: "c.txt", sha256: null },
 			]);
-			expect(
+			assert.equal(
 				await readFile(join(agentDirectory, ".config-sync", "backups", "backup-complete", "files", "a.txt"), "utf8"),
-			).toBe("old-a");
+				"old-a",
+			);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -178,17 +181,19 @@ describe("machine apply", () => {
 	it("requires a confirmed action and valid baseline for every deletion", () => {
 		const current = { "a.txt": file("a.txt", "old") };
 		const final = {};
-		expect(() => applySet(current, final, null)).toThrow("does not permit the machine deletion");
+		assert.throws(() => applySet(current, final, null), /does not permit the machine deletion/);
 		const artifact = plan(current, final);
-		expect(() =>
-			buildMachineApplySet({
-				plan: artifact,
-				authorization: { planId: "f".repeat(64) },
-				currentMachineTree: current,
-				committedFinalMachineTree: final,
-				baseline: baseline(current),
-			}),
-		).toThrow("authorization");
+		assert.throws(
+			() =>
+				buildMachineApplySet({
+					plan: artifact,
+					authorization: { planId: "f".repeat(64) },
+					currentMachineTree: current,
+					committedFinalMachineTree: final,
+					baseline: baseline(current),
+				}),
+			/authorization/,
+		);
 	});
 
 	it("prevents the first machine change when backup verification fails", async () => {
@@ -212,7 +217,7 @@ describe("machine apply", () => {
 		};
 		try {
 			await writeTree(machineRoot, current);
-			await expect(
+			await assert.rejects(
 				applyMachinePlan({
 					agentDirectory,
 					machineRoot,
@@ -221,9 +226,10 @@ describe("machine apply", () => {
 					applySet: applySet(current, final),
 					operations,
 				}),
-			).rejects.toThrow("THIS MACHINE was not changed");
-			expect(machineWrites).toBe(0);
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("old");
+				/THIS MACHINE was not changed/,
+			);
+			assert.equal(machineWrites, 0);
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old");
 		} finally {
 			await temporary.cleanup();
 		}
@@ -260,11 +266,11 @@ describe("machine apply", () => {
 				});
 				assert.fail("Expected apply failure");
 			} catch (error) {
-				expect(error).toBeInstanceOf(MachineApplyError);
-				expect((error as MachineApplyError).restored).toBe(true);
+				assert.ok(error instanceof MachineApplyError);
+				assert.equal(error.restored, true);
 			}
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("old-a");
-			expect(await readFile(join(machineRoot, "b.txt"), "utf8")).toBe("old-b");
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old-a");
+			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "old-b");
 		} finally {
 			await temporary.cleanup();
 		}
@@ -304,12 +310,12 @@ describe("machine apply", () => {
 				});
 				assert.fail("Expected restore failure");
 			} catch (error) {
-				expect(error).toBeInstanceOf(MachineApplyError);
-				expect((error as MachineApplyError).restored).toBe(false);
-				expect((error as MachineApplyError).manualRecoveryPaths).toEqual(["a.txt"]);
-				expect((error as MachineApplyError).backupId).toBe("backup-manual");
+				assert.ok(error instanceof MachineApplyError);
+				assert.equal(error.restored, false);
+				assert.deepEqual(error.manualRecoveryPaths, ["a.txt"]);
+				assert.equal(error.backupId, "backup-manual");
 			}
-			expect(await readFile(getBackupMetadataPath(agentDirectory, "backup-manual"), "utf8")).toContain("a.txt");
+			assert.ok((await readFile(getBackupMetadataPath(agentDirectory, "backup-manual"), "utf8")).includes("a.txt"));
 		} finally {
 			await temporary.cleanup();
 		}
@@ -338,7 +344,7 @@ describe("machine apply", () => {
 		};
 		try {
 			await writeTree(machineRoot, current);
-			await expect(
+			await assert.rejects(
 				applyMachinePlan({
 					agentDirectory,
 					machineRoot,
@@ -348,13 +354,14 @@ describe("machine apply", () => {
 					operations,
 					signal: controller.signal,
 				}),
-			).rejects.toMatchObject({ restored: true });
-			expect(writesBeforeCancellation).toEqual([join(machineRoot, "a.txt")]);
-			expect(await readFile(join(machineRoot, "a.txt"), "utf8")).toBe("old-a");
-			expect(await readFile(join(machineRoot, "b.txt"), "utf8")).toBe("old-b");
+				(error: unknown) => error instanceof MachineApplyError && error.restored,
+			);
+			assert.deepEqual(writesBeforeCancellation, [join(machineRoot, "a.txt")]);
+			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old-a");
+			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "old-b");
 			const countAtReport = machineWriteCount;
 			await new Promise((accept) => setTimeout(accept, 20));
-			expect(machineWriteCount).toBe(countAtReport);
+			assert.equal(machineWriteCount, countAtReport);
 		} finally {
 			await temporary.cleanup();
 		}

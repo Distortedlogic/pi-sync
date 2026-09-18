@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
-import * as vi from "jest-mock";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import {
 	executeConfirmedPackagePlan,
@@ -195,34 +193,43 @@ describe("approved package execution", () => {
 			events.push(`command:${args[1].join(":")}`);
 			return createExec(calls)(...args);
 		};
-		const rememberApprovals = vi.fn(async (sources: readonly string[]) => {
+		const rememberApprovals = mock.fn(async (sources: readonly string[]) => {
 			events.push(`remember:${sources.join(",")}`);
 		});
 		try {
 			await prepareExecution(agentDirectory, fixture);
 			const result = await execute({ agentDirectory, fixture, exec, rememberApprovals });
-			expect(calls.map(({ command, args }) => [command, ...args])).toEqual([
-				["pi", "remove", "npm:remove@1.0.0"],
-				["pi", "install", "npm:update@2.0.0"],
-				["pi", "install", "npm:install@1.0.0"],
-			]);
-			expect(calls.every((call) => call.timeout === 5_000)).toBe(true);
-			expect(result.status).toBe("success");
-			expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.plannedSettingsText);
+			assert.deepEqual(
+				calls.map(({ command, args }) => [command, ...args]),
+				[
+					["pi", "remove", "npm:remove@1.0.0"],
+					["pi", "install", "npm:update@2.0.0"],
+					["pi", "install", "npm:install@1.0.0"],
+				],
+			);
+			assert.equal(
+				calls.every((call) => call.timeout === 5_000),
+				true,
+			);
+			assert.equal(result.status, "success");
+			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.plannedSettingsText);
 			const finalSettings = parseSettings(fixture.plannedSettingsText, { source: "machine", policy: fixture.policy });
-			expect(packageSetFingerprint(finalSettings.packages)).toBe(fixture.plan.packageFingerprint);
-			expect(rememberApprovals).toHaveBeenCalledWith(["npm:install@1.0.0"]);
-			expect(events.at(-1)).toBe("remember:npm:install@1.0.0");
+			assert.equal(packageSetFingerprint(finalSettings.packages), fixture.plan.packageFingerprint);
+			assert.deepEqual(rememberApprovals.mock.calls[0]?.arguments, [["npm:install@1.0.0"]]);
+			assert.equal(events.at(-1), "remember:npm:install@1.0.0");
 			const journal = await loadJournal(agentDirectory);
-			expect(journal?.stage).toBe("machine_files_applied");
-			expect(journal?.packageEvents?.map(({ operation, status }) => `${operation}:${status}`)).toEqual([
-				"remove:started",
-				"remove:completed",
-				"update:started",
-				"update:completed",
-				"install:started",
-				"install:completed",
-			]);
+			assert.equal(journal?.stage, "machine_files_applied");
+			assert.deepEqual(
+				journal?.packageEvents?.map(({ operation, status }) => `${operation}:${status}`),
+				[
+					"remove:started",
+					"remove:completed",
+					"update:started",
+					"update:completed",
+					"install:started",
+					"install:completed",
+				],
+			);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -293,9 +300,9 @@ describe("approved package execution", () => {
 					if (error instanceof Error) failure = error;
 				}
 				assert.ok(failure, `Expected ${selected.name} to fail.`);
-				expect(failure.message).toContain(selected.expected);
+				assert.ok(failure.message.includes(selected.expected));
 			}
-			expect(calls).toEqual([]);
+			assert.deepEqual(calls, []);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -317,10 +324,11 @@ describe("approved package execution", () => {
 		try {
 			const requiredAgent = join(requiredRoot.path, "agent");
 			await prepareExecution(requiredAgent, requiredFixture);
-			await expect(
+			await assert.rejects(
 				execute({ agentDirectory: requiredAgent, fixture: requiredFixture, exec: createExec([], () => true) }),
-			).rejects.toThrow("pi remove failed");
-			expect(await readFile(join(requiredAgent, "settings.json"), "utf8")).toBe(requiredFixture.currentSettingsText);
+				/pi remove failed/,
+			);
+			assert.equal(await readFile(join(requiredAgent, "settings.json"), "utf8"), requiredFixture.currentSettingsText);
 
 			const bestEffortAgent = join(bestEffortRoot.path, "agent");
 			await prepareExecution(bestEffortAgent, bestEffortFixture);
@@ -329,12 +337,13 @@ describe("approved package execution", () => {
 				fixture: bestEffortFixture,
 				exec: createExec([], () => true),
 			});
-			expect(result.status).toBe("success");
-			expect(result.bestEffortFailureIds).toHaveLength(1);
-			expect(await readFile(join(bestEffortAgent, "settings.json"), "utf8")).toBe(
+			assert.equal(result.status, "success");
+			assert.equal(result.bestEffortFailureIds.length, 1);
+			assert.equal(
+				await readFile(join(bestEffortAgent, "settings.json"), "utf8"),
 				bestEffortFixture.plannedSettingsText,
 			);
-			expect((await loadJournal(bestEffortAgent))?.packageEvents?.at(-1)?.status).toBe("best_effort_failed");
+			assert.equal((await loadJournal(bestEffortAgent))?.packageEvents?.at(-1)?.status, "best_effort_failed");
 		} finally {
 			await Promise.all([requiredRoot.cleanup(), bestEffortRoot.cleanup()]);
 		}
@@ -350,15 +359,15 @@ describe("approved package execution", () => {
 			[{ operation: "install", identity: "npm:one", exactSource: "npm:one@1.0.0" }],
 		);
 		const exec: PackageExec = async (_command, _args, options) => {
-			expect(options?.signal).toBe(controller.signal);
+			assert.equal(options?.signal, controller.signal);
 			controller.abort();
 			return { stdout: "", stderr: "", code: 1, killed: true };
 		};
 		try {
 			await prepareExecution(agentDirectory, fixture);
-			await expect(execute({ agentDirectory, fixture, exec, signal: controller.signal })).rejects.toThrow("cancelled");
-			expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.currentSettingsText);
-			expect((await loadJournal(agentDirectory))?.packageEvents?.[0]?.status).toBe("started");
+			await assert.rejects(execute({ agentDirectory, fixture, exec, signal: controller.signal }), /cancelled/);
+			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.currentSettingsText);
+			assert.equal((await loadJournal(agentDirectory))?.packageEvents?.[0]?.status, "started");
 		} finally {
 			await temporary.cleanup();
 		}
@@ -393,20 +402,24 @@ describe("package rollback", () => {
 			const agentDirectory = join(temporary.path, "agent");
 			const fixture = packageFixture(current, planned, specs);
 			const calls: PiCall[] = [];
-			const rememberApprovals = vi.fn(async () => {});
+			const rememberApprovals = mock.fn(async () => {});
 			try {
 				await prepareExecution(agentDirectory, fixture);
-				await expect(
+				await assert.rejects(
 					execute({
 						agentDirectory,
 						fixture,
 						exec: createExec(calls, (args) => args[1] === "npm:z@1.0.0"),
 						rememberApprovals,
 					}),
-				).rejects.toBeInstanceOf(PackageExecutionError);
-				expect(calls.map(({ args }) => args.join(":"))).toEqual(expected);
-				expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.currentSettingsText);
-				expect(rememberApprovals).not.toHaveBeenCalled();
+					PackageExecutionError,
+				);
+				assert.deepEqual(
+					calls.map(({ args }) => args.join(":")),
+					expected,
+				);
+				assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.currentSettingsText);
+				assert.equal(rememberApprovals.mock.callCount(), 0);
 			} finally {
 				await temporary.cleanup();
 			}
@@ -435,17 +448,16 @@ describe("package rollback", () => {
 				});
 				assert.fail("Expected package failure");
 			} catch (error) {
-				expect(error).toBeInstanceOf(PackageExecutionError);
-				const failure = error as PackageExecutionError;
-				expect(failure.originalError).toBe("pi install failed.");
-				expect(failure.rollbackErrors).toEqual([
+				assert.ok(error instanceof PackageExecutionError);
+				assert.equal(error.originalError, "pi install failed.");
+				assert.deepEqual(error.rollbackErrors, [
 					{
 						actionId: packageActionDecisionId(fixture.plan.actions[0] as PlanArtifactAction),
 						message: "Package rollback command failed.",
 					},
 				]);
 			}
-			expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.currentSettingsText);
+			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.currentSettingsText);
 		} finally {
 			await temporary.cleanup();
 		}

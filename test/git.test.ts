@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -5,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { expect } from "expect";
 import stableStringify from "json-stable-stringify";
 import { getConfigSyncPaths } from "../src/config.ts";
 import { discoverFileInventory, type InventoryFile } from "../src/files.ts";
@@ -122,9 +122,9 @@ describe("Git snapshots and candidates", () => {
 		try {
 			const seededCommit = await seedRepository(shared.path, agent.path);
 			const fetched = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			expect(fetched.status).toBe("ready");
+			assert.equal(fetched.status, "ready");
 			if (fetched.status !== "ready") return;
-			expect(fetched.snapshot.sharedCommit).toBe(seededCommit);
+			assert.equal(fetched.snapshot.sharedCommit, seededCommit);
 			const current = await discoverFileInventory(fetched.snapshot.workspace.repositoryDirectory, "shared");
 			const finalTree = { ...current.files, "settings.json": file("settings.json", '{"theme":"light"}\n') };
 			const candidate = await createCandidateCommit({
@@ -134,19 +134,23 @@ describe("Git snapshots and candidates", () => {
 				currentSharedTree: current.files,
 				finalSharedTree: finalTree,
 			});
-			expect(candidate.reviewedSharedCommit).toBe(seededCommit);
+			assert.equal(candidate.reviewedSharedCommit, seededCommit);
 			const parent = await execFileAsync("git", ["rev-parse", `${candidate.candidateCommit}^`], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
-			expect(parent.stdout.trim()).toBe(seededCommit);
+			assert.equal(parent.stdout.trim(), seededCommit);
 			const content = await execFileAsync("git", ["show", `${candidate.candidateCommit}:settings.json`], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
-			expect(content.stdout).toBe('{"theme":"light"}\n');
-			expect(calls.every((call) => call.command === "git" && call.timeout === 30_000)).toBe(true);
-			expect(
+			assert.equal(content.stdout, '{"theme":"light"}\n');
+			assert.equal(
+				calls.every((call) => call.command === "git" && call.timeout === 30_000),
+				true,
+			);
+			assert.equal(
 				calls.every((call) => call.args.includes(`core.hooksPath=${fetched.snapshot.workspace.hooksDirectory}`)),
-			).toBe(true);
+				true,
+			);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -160,11 +164,11 @@ describe("Git snapshots and candidates", () => {
 		try {
 			await seedRepository(shared.path, agent.path);
 			const first = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			expect(first.status).toBe("ready");
+			assert.equal(first.status, "ready");
 			if (first.status !== "ready") return;
 			await writeFile(join(first.snapshot.workspace.repositoryDirectory, "unknown.txt"), "unknown", "utf8");
 			const second = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			expect(second).toEqual({
+			assert.deepEqual(second, {
 				status: "doctor",
 				doctor: {
 					ok: false,
@@ -197,7 +201,7 @@ describe("Git snapshots and candidates", () => {
 		const repository: RepositoryConfig = { repositoryPath: shared.path, branch: "main" };
 		try {
 			const fetched = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			expect(fetched.status).toBe("ready");
+			assert.equal(fetched.status, "ready");
 			if (fetched.status !== "ready") return;
 			const repositoryHooks = join(fetched.snapshot.workspace.repositoryDirectory, ".git", "hooks");
 			await mkdir(repositoryHooks, { recursive: true });
@@ -214,7 +218,10 @@ describe("Git snapshots and candidates", () => {
 				currentSharedTree: current.files,
 				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
 			});
-			await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+			await assert.rejects(
+				readFile(marker, "utf8"),
+				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
+			);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -245,9 +252,12 @@ describe("Git snapshots and candidates", () => {
 				targetCommit: candidate.candidateCommit,
 				path: "settings.json",
 			});
-			expect(firstDiff.baseCommit).toBe(candidate.reviewedSharedCommit);
-			expect(firstDiff.diff).toContain("settings.json");
-			expect(calls.some((call) => call.args.includes("fetch"))).toBe(false);
+			assert.equal(firstDiff.baseCommit, candidate.reviewedSharedCommit);
+			assert.ok(firstDiff.diff.includes("settings.json"));
+			assert.equal(
+				calls.some((call) => call.args.includes("fetch")),
+				false,
+			);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -266,21 +276,20 @@ describe("setup repository inspection", () => {
 				agentDirectory: agent.path,
 				repository,
 			});
-			expect(empty).toMatchObject({
-				empty: true,
-				manifest: null,
-				privacyNotice: "SHARED REPOSITORY privacy could not be verified.",
-				sharedCommit: null,
-			});
-			expect(await repositoryRefs(shared.path)).toBe(emptyRefs);
+			assert.equal(empty.empty, true);
+			assert.equal(empty.manifest, null);
+			assert.equal(empty.privacyNotice, "SHARED REPOSITORY privacy could not be verified.");
+			assert.equal(empty.sharedCommit, null);
+			assert.equal(await repositoryRefs(shared.path), emptyRefs);
 
 			await seedRepository(shared.path, agent.path);
 			const checkout = join(agent.path, "seed");
 			const refsBeforeRejectedInspection = await repositoryRefs(shared.path);
-			await expect(
+			await assert.rejects(
 				inspectSetupRepository({ exec: createGitExec(), agentDirectory: agent.path, repository }),
-			).rejects.toThrow(`valid ${SHARED_MANIFEST_PATH} manifest`);
-			expect(await repositoryRefs(shared.path)).toBe(refsBeforeRejectedInspection);
+				new RegExp(`valid ${SHARED_MANIFEST_PATH} manifest`),
+			);
+			assert.equal(await repositoryRefs(shared.path), refsBeforeRejectedInspection);
 
 			await writeFile(
 				join(checkout, SHARED_MANIFEST_PATH),
@@ -296,9 +305,9 @@ describe("setup repository inspection", () => {
 				agentDirectory: agent.path,
 				repository,
 			});
-			expect(inspected.empty).toBe(false);
-			expect(inspected.manifest).toEqual({ managedScope: ["settings.json"], schemaVersion: 1 });
-			expect(await repositoryRefs(shared.path)).toBe(refsBeforeAcceptedInspection);
+			assert.equal(inspected.empty, false);
+			assert.deepEqual(inspected.manifest, { managedScope: ["settings.json"], schemaVersion: 1 });
+			assert.equal(await repositoryRefs(shared.path), refsBeforeAcceptedInspection);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -315,10 +324,11 @@ describe("setup repository inspection", () => {
 				args.includes("ls-remote")
 					? { stdout: "", stderr: "unavailable", code: 1, killed: false }
 					: createGitExec()(command, args, options);
-			await expect(
+			await assert.rejects(
 				inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
-			).rejects.toThrow("access verification failed");
-			expect(await repositoryRefs(shared.path)).toBe(refsBefore);
+				/access verification failed/,
+			);
+			assert.equal(await repositoryRefs(shared.path), refsBefore);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -332,14 +342,15 @@ describe("setup repository inspection", () => {
 		try {
 			await mkdir(paths.repositoryDirectory, { recursive: true });
 			await writeFile(sentinel, "keep", "utf8");
-			await expect(
+			await assert.rejects(
 				inspectSetupRepository({
 					exec: createGitExec(),
 					agentDirectory: agent.path,
 					repository: { branch: "main", repositoryPath: shared.path },
 				}),
-			).rejects.toThrow("not changed");
-			expect(await readFile(sentinel, "utf8")).toBe("keep");
+				/not changed/,
+			);
+			assert.equal(await readFile(sentinel, "utf8"), "keep");
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -368,17 +379,17 @@ describe("PUBLISH revalidation", () => {
 			});
 			const concurrentCommit = await advanceSharedRepository(shared.path, agent.path);
 			const result = await publishCandidateCommit({ exec, candidate });
-			expect(result).toEqual({
+			assert.deepEqual(result, {
 				status: "plan_expired",
 				message: "PLAN EXPIRED",
 				candidateCommit: candidate.candidateCommit,
 				currentSharedCommit: concurrentCommit,
 			});
-			expect(await readFile(machineMarker, "utf8")).toBe("unchanged");
+			assert.equal(await readFile(machineMarker, "utf8"), "unchanged");
 			const preserved = await execFileAsync("git", ["rev-parse", candidate.ref], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
-			expect(preserved.stdout.trim()).toBe(candidate.candidateCommit);
+			assert.equal(preserved.stdout.trim(), candidate.candidateCommit);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -403,13 +414,13 @@ describe("PUBLISH revalidation", () => {
 				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
 			});
 			const result = await publishCandidateCommit({ exec, candidate });
-			expect(result).toEqual({ status: "published", publishedCommit: candidate.candidateCommit });
+			assert.deepEqual(result, { status: "published", publishedCommit: candidate.candidateCommit });
 			const head = await execFileAsync("git", ["rev-parse", "refs/heads/main"], { cwd: shared.path });
-			expect(head.stdout.trim()).toBe(candidate.candidateCommit);
+			assert.equal(head.stdout.trim(), candidate.candidateCommit);
 			const pushCalls = calls.filter((call) => call.args.includes("push"));
-			expect(pushCalls).toHaveLength(1);
-			expect(pushCalls[0]?.args).not.toContain("--force");
-			expect(pushCalls[0]?.args).not.toContain("--force-with-lease");
+			assert.equal(pushCalls.length, 1);
+			assert.ok(!pushCalls[0]?.args.includes("--force"));
+			assert.ok(!pushCalls[0]?.args.includes("--force-with-lease"));
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
