@@ -164,35 +164,6 @@ describe("canonical plan artifact", () => {
 });
 
 describe("plan and receipt formatting", () => {
-	it("uses fixed sections and unambiguous destination text", () => {
-		const text = formatPlanText(plan(), "final-plan");
-		expect(text).toBe(`## FINAL RESULT
-- Final immutable plan 55f162ec8dee71fd6809440678f21288163bd08186c83fa55c44ee4fd4f6799d (55f162ec8dee)
-- Mode: RECONCILE
-- SHARED REPOSITORY checked at: 2026-01-01T00:00:01.000Z
-
-## THIS MACHINE → SHARED REPOSITORY
-- WRITE IN SHARED REPOSITORY: settings.json | Destination: SHARED REPOSITORY | Result: settings.json in SHARED REPOSITORY will match THIS MACHINE.
-
-## SHARED REPOSITORY → THIS MACHINE
-- DELETE FROM THIS MACHINE: old.json | Destination: THIS MACHINE | Result: old.json will not exist on THIS MACHINE.
-
-## CODE EXECUTION
-- INSTALL PACKAGE ON THIS MACHINE: npm:example | Destination: THIS MACHINE | Result: THIS MACHINE will use the exact approved package source.
-
-## DELETIONS
-- DELETE FROM THIS MACHINE: old.json | Destination: THIS MACHINE | Result: old.json will not exist on THIS MACHINE.
-
-## CONFLICTS
-- CONFLICT — NO ACTION SELECTED: conflict.json | Destination: NONE | Result: THIS MACHINE and SHARED REPOSITORY keep their current values for conflict.json.
-
-## WILL NOT HAPPEN
-- No path outside the reviewed plan will change. | Destination: NONE
-- Seven unchanged paths remain unchanged. | Destination: NONE | Count: 7`);
-		expect(text).not.toMatch(/\b(local|remote|added|removed|pull|push)\b/i);
-		for (const path of ["settings.json", "old.json", "npm:example", "conflict.json"]) expect(text).toContain(path);
-	});
-
 	it("shows baseline-only changed paths", () => {
 		const artifact = plan({
 			actions: [

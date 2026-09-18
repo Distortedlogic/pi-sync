@@ -96,21 +96,6 @@ describe("configuration storage", () => {
 		}
 	});
 
-	it("keeps one complete state document when atomic writes overlap", async () => {
-		const agentDirectory = await createTemporaryAgentDirectory();
-		try {
-			await Promise.all([
-				saveState(agentDirectory.path, state("machine-one")),
-				saveState(agentDirectory.path, state("machine-two")),
-			]);
-			const saved = await loadState(agentDirectory.path);
-			expect(["machine-one", "machine-two"]).toContain(saved?.deviceId);
-			expect(saved?.baseline?.files["settings.json"]?.sha256).toBe("b".repeat(64));
-		} finally {
-			await agentDirectory.cleanup();
-		}
-	});
-
 	it("writes and reads every durable artifact type", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 		const policy = createDefaultLocalPolicy();

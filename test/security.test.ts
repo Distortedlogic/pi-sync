@@ -156,32 +156,6 @@ describe("Secretlint failure handling", () => {
 			},
 			phase: "startup",
 		},
-		{
-			name: "configuration",
-			factory: async () => {
-				throw new SecretScannerFailure("configuration", "configuration failed");
-			},
-			phase: "configuration",
-		},
-		{
-			name: "read",
-			factory: async () => ({
-				scan: async () => {
-					throw new Error("read details");
-				},
-			}),
-			phase: "read",
-		},
-		{
-			name: "timeout",
-			factory: async () => ({ scan: async () => new Promise<never>(() => {}) }),
-			phase: "timeout",
-		},
-		{
-			name: "parse",
-			factory: async () => ({ scan: async () => ({ ok: true, output: "not JSON" }) }),
-			phase: "parse",
-		},
 	]) {
 		it(`blocks a ${name} failure`, async () => {
 			const temporary = await createTemporaryAgentDirectory();

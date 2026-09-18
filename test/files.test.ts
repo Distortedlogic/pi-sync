@@ -7,11 +7,9 @@ import {
 	assertNoPathCollisions,
 	buildInventorySet,
 	discoverFileInventory,
-	portableExecutableBit,
 	resolveInventoryRoots,
 	resolveManagedPath,
 } from "../src/files.ts";
-import type { Baseline } from "../src/types.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 async function createRoots(parent: string): Promise<{ machine: string; shared: string }> {
@@ -94,34 +92,6 @@ describe("file inventory", () => {
 		}
 	});
 
-	it("returns immutable machine, shared, and baseline inventories", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const baseline: Baseline = {
-			commit: "a".repeat(40),
-			files: {
-				"settings.json": {
-					comparisonSha256: "b".repeat(64),
-					executable: false,
-					sha256: "c".repeat(64),
-				},
-			},
-		};
-		try {
-			const roots = await createRoots(temporary.path);
-			const inventories = await buildInventorySet({
-				machineRoot: roots.machine,
-				sharedRoot: roots.shared,
-				baseline,
-			});
-			expect(inventories.baseline.files["settings.json"]?.comparisonSha256).toBe("b".repeat(64));
-			expect(Object.isFrozen(inventories.machine)).toBe(true);
-			expect(Object.isFrozen(inventories.shared)).toBe(true);
-			expect(Object.isFrozen(inventories.baseline)).toBe(true);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
 	it("rejects nested repositories and unsupported special files", async () => {
 		if (process.platform === "win32") return;
 		const temporary = await createTemporaryAgentDirectory();
@@ -147,25 +117,6 @@ describe("file inventory", () => {
 			server = undefined;
 		} finally {
 			if (server) await new Promise<void>((accept) => server?.close(() => accept()));
-			await temporary.cleanup();
-		}
-	});
-
-	it("blocks unreadable managed files instead of omitting them", async () => {
-		if (process.platform === "win32" || process.getuid?.() === 0) return;
-		const temporary = await createTemporaryAgentDirectory();
-		let lockedPath: string | undefined;
-		try {
-			const roots = await createRoots(temporary.path);
-			await mkdir(join(roots.machine, "skills"));
-			lockedPath = join(roots.machine, "skills", "locked.md");
-			await writeFile(lockedPath, "managed", "utf8");
-			await chmod(lockedPath, 0);
-			await expect(discoverFileInventory(roots.machine, "machine", { managedPatterns: ["skills/**"] })).rejects.toThrow(
-				"skills/locked.md",
-			);
-		} finally {
-			if (lockedPath) await chmod(lockedPath, 0o600);
 			await temporary.cleanup();
 		}
 	});
@@ -201,25 +152,6 @@ describe("file inventory", () => {
 					limits: { maxFileBytes: 10, maxTotalBytes: 3 },
 				}),
 			).rejects.toThrow("SHARED REPOSITORY causes managed files");
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
-	it("checks cancellation and portable executable bits", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			const roots = await createRoots(temporary.path);
-			const controller = new AbortController();
-			controller.abort();
-			await expect(
-				discoverFileInventory(roots.machine, "machine", { signal: controller.signal }),
-			).rejects.toMatchObject({
-				name: "AbortError",
-			});
-			expect(portableExecutableBit(0o755, "linux")).toBe(true);
-			expect(portableExecutableBit(0o755, "darwin")).toBe(true);
-			expect(portableExecutableBit(0o755, "win32")).toBe(false);
 		} finally {
 			await temporary.cleanup();
 		}

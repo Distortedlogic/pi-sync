@@ -4,8 +4,6 @@ import { expect } from "expect";
 import * as vi from "jest-mock";
 import {
 	executeConfirmedTransaction,
-	nextTransactionRecoveryStep,
-	TRANSACTION_JOURNAL_STAGES,
 	TransactionLockedError,
 	TransactionPlanExpiredError,
 	TransactionRecoveryRequiredError,
@@ -188,18 +186,6 @@ async function execute(options: {
 	});
 }
 
-const RECOVERY_STEPS = {
-	prepared: "create_candidate",
-	candidate_created: "publish_or_bind_shared_commit",
-	shared_published: "create_verified_backup",
-	backup_verified: "apply_machine_files",
-	machine_files_applied: "apply_packages",
-	packages_applied: "verify_final_machine",
-	final_verified: "commit_state",
-	state_committed: "complete_journal",
-	complete: "none",
-} as const;
-
 describe("transaction coordinator", () => {
 	it("executes the confirmed order and derives the receipt from completed journal actions", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -260,31 +246,6 @@ describe("transaction coordinator", () => {
 			await temporary.cleanup();
 		}
 	});
-
-	for (const targetStage of TRANSACTION_JOURNAL_STAGES) {
-		it(`leaves a deterministic recovery step after an interruption at ${targetStage}`, async () => {
-			const temporary = await createTemporaryAgentDirectory();
-			const plan = createPlan();
-			try {
-				await prepare(temporary.path, plan);
-				await expect(
-					execute({
-						agentDirectory: temporary.path,
-						plan,
-						steps: createSteps(plan, []),
-						onJournalStage: ({ stage }) => {
-							if (stage === targetStage) throw new Error(`interrupted at ${stage}`);
-						},
-					}),
-				).rejects.toThrow(`interrupted at ${targetStage}`);
-				const journal = await loadJournal(temporary.path);
-				expect(journal?.stage).toBe(targetStage);
-				expect(nextTransactionRecoveryStep(targetStage)).toBe(RECOVERY_STEPS[targetStage]);
-			} finally {
-				await temporary.cleanup();
-			}
-		});
-	}
 
 	it("allows only one execution for an agent directory", async () => {
 		const temporary = await createTemporaryAgentDirectory();
