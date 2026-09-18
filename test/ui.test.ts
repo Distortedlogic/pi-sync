@@ -236,11 +236,13 @@ describe("plan review", () => {
 	it("collects every decision, rebuilds, shows RPC text, and requires the exact full ID", async () => {
 		let rebuilt: Readonly<PlanArtifact> | undefined;
 		const select = vi.fn(async (_title: string, choices: string[]) => choices[0]);
-		const input = vi.fn(async () => rebuilt?.planId);
-		const rebuild = vi.fn((decisions: readonly Readonly<CollectedDecision>[]) => {
-			rebuilt = plan({ decisions: decisions as PlanDecision[] });
-			return rebuilt;
-		});
+		const input = vi.fn(async (_title: string, _placeholder?: string) => rebuilt?.planId);
+		const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>(
+			(decisions) => {
+				rebuilt = plan({ decisions: decisions as PlanDecision[] });
+				return rebuilt;
+			},
+		);
 		const ctx = context({
 			hasUI: true,
 			mode: "rpc",
@@ -262,7 +264,7 @@ describe("plan review", () => {
 
 	for (const mode of ["print", "json"] as const) {
 		it(`returns the plan only in ${mode} mode`, async () => {
-			const rebuild = vi.fn();
+			const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
 			const previewPlan = plan();
 			const result = await reviewSyncPlan({
 				ctx: context({ mode }),
@@ -280,7 +282,7 @@ describe("plan review", () => {
 	}
 
 	it("cancels without rebuilding or authorizing changes", async () => {
-		const rebuild = vi.fn();
+		const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
 		const select = vi.fn(async () => undefined);
 		const ctx = context({
 			hasUI: true,

@@ -89,7 +89,7 @@ describe("conflict review", () => {
 				shared: `SHARED REPOSITORY: 6 bytes, SHA-256 ${shared.sha256}, executable no.`,
 			},
 		]);
-		const select = vi.fn(async () => CONFLICT_CHOICES[0].label);
+		const select = vi.fn(async (_title: string, _options: string[]) => CONFLICT_CHOICES[0].label);
 		const decisions = await collectConflictDecisions({
 			ctx: { hasUI: true, ui: { select } as unknown as ExtensionCommandContext["ui"] },
 			conflicts: summaries,

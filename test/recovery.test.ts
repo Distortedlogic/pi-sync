@@ -77,7 +77,7 @@ describe("recovery decisions", () => {
 				}),
 			).resolves.toEqual({ status: "decision_required", recovery });
 
-			const select = vi.fn(async () => RECOVERY_CHOICES[1].label);
+			const select = vi.fn(async (_title: string, _options: string[]) => RECOVERY_CHOICES[1].label);
 			await expect(
 				requestRecoveryDecision({
 					ctx: { hasUI: true, ui: { select } as unknown as ExtensionCommandContext["ui"] },

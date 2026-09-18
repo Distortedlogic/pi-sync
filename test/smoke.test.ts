@@ -34,7 +34,7 @@ describe("pi-sync foundation", () => {
 	it("detects an incomplete journal at session start and command start without running recovery", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 		const notify = vi.fn();
-		const select = vi.fn(async () => RECOVERY_CHOICES[2].label);
+		const select = vi.fn(async (_title: string, _options: string[]) => RECOVERY_CHOICES[2].label);
 		const setStatus = vi.fn();
 		const ctx = {
 			hasUI: true,
