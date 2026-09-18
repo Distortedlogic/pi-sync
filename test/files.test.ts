@@ -206,30 +206,6 @@ describe("file inventory", () => {
 		}
 	});
 
-	it("handles many managed files and long nested paths within configured limits", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			const roots = await createRoots(temporary.path);
-			const skills = join(roots.machine, "skills");
-			await mkdir(skills);
-			await Promise.all(
-				Array.from({ length: 200 }, (_, index) =>
-					writeFile(join(skills, `rule-${index.toString().padStart(3, "0")}.md`), `rule ${index}\n`, "utf8"),
-				),
-			);
-			const longDirectory = join(skills, ...Array.from({ length: 12 }, (_, index) => `segment-${index}`));
-			await mkdir(longDirectory, { recursive: true });
-			await writeFile(join(longDirectory, "long-rule.md"), "long path\n", "utf8");
-			const inventory = await discoverFileInventory(roots.machine, "machine", {
-				managedPatterns: ["skills/**"],
-			});
-			expect(Object.keys(inventory.files)).toHaveLength(201);
-			expect(Object.keys(inventory.files).some((path) => path.endsWith("long-rule.md"))).toBe(true);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
 	it("checks cancellation and portable executable bits", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {

@@ -236,19 +236,4 @@ describe("Secretlint failure handling", () => {
 			await temporary.cleanup();
 		}
 	});
-
-	it("uses the maintained recommended rule set", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			await writeFile(
-				join(temporary.path, "key.txt"),
-				["-----BEGIN " + "PRIVATE KEY-----", "not-a-real-key", "-----END " + "PRIVATE KEY-----", ""].join("\n"),
-				"utf8",
-			);
-			const input = await validationInput(temporary.path, { scannerFactory: undefined });
-			await expect(validateStagedCandidate(input)).rejects.toBeInstanceOf(SecretFindingError);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
 });

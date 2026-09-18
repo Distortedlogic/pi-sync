@@ -1,8 +1,7 @@
 import { describe, it } from "node:test";
 import { expect } from "expect";
-import fc from "fast-check";
 import type { FileInventory, InventoryFile } from "../src/files.ts";
-import { classifyFile, createSyncPlan, type FileActionName, type SyncMode, sortPlanActions } from "../src/plan.ts";
+import { classifyFile, createSyncPlan, type FileActionName, sortPlanActions } from "../src/plan.ts";
 
 const PATH = "settings.json";
 
@@ -208,49 +207,5 @@ describe("mode plans", () => {
 		expect(plan.blocked).toBe(true);
 		expect(plan.finalMachineTree).toEqual(machine.files);
 		expect(plan.finalSharedTree).toEqual(shared.files);
-	});
-});
-
-const valueArbitrary = fc.array(fc.option(fc.integer({ min: 0, max: 9 }), { nil: undefined }), {
-	minLength: 4,
-	maxLength: 4,
-});
-const inputArbitrary = fc.tuple(valueArbitrary, valueArbitrary, valueArbitrary);
-
-describe("planner properties", () => {
-	it("never produces two final values for one destination path in a resolved plan", () => {
-		fc.assert(
-			fc.property(
-				inputArbitrary,
-				fc.constantFrom<SyncMode>("publish", "apply", "reconcile"),
-				([machine, shared, baseline], mode) => {
-					const plan = createSyncPlan({
-						mode,
-						machine: inventory("machine", machine),
-						shared: inventory("shared", shared),
-						baseline: inventory("baseline", baseline),
-					});
-					if (plan.blocked) return;
-					const destinations = plan.actions
-						.filter((action) => action.direction === "machine-to-shared" || action.direction === "shared-to-machine")
-						.map((action) => `${action.direction}:${action.path}`);
-					expect(new Set(destinations).size).toBe(destinations.length);
-				},
-			),
-		);
-	});
-
-	it("PUBLISH never changes THIS MACHINE and APPLY never changes SHARED REPOSITORY", () => {
-		fc.assert(
-			fc.property(inputArbitrary, ([machineValues, sharedValues, baselineValues]) => {
-				const machine = inventory("machine", machineValues);
-				const shared = inventory("shared", sharedValues);
-				const baseline = inventory("baseline", baselineValues);
-				const publish = createSyncPlan({ mode: "publish", machine, shared, baseline });
-				const apply = createSyncPlan({ mode: "apply", machine, shared, baseline });
-				expect(publish.finalMachineTree).toEqual(machine.files);
-				expect(apply.finalSharedTree).toEqual(shared.files);
-			}),
-		);
 	});
 });

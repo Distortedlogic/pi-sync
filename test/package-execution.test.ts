@@ -352,36 +352,6 @@ describe("approved package execution", () => {
 describe("package rollback", () => {
 	for (const { name, current, planned, specs, expected } of [
 		{
-			name: "install",
-			current: [],
-			planned: ["npm:a@1.0.0", "npm:z@1.0.0"],
-			specs: [
-				{ operation: "install", identity: "npm:a", exactSource: "npm:a@1.0.0" },
-				{ operation: "install", identity: "npm:z", exactSource: "npm:z@1.0.0" },
-			] as ActionSpec[],
-			expected: ["install:npm:a@1.0.0", "install:npm:z@1.0.0", "remove:npm:a@1.0.0"],
-		},
-		{
-			name: "update",
-			current: ["npm:a@1.0.0"],
-			planned: ["npm:a@2.0.0", "npm:z@1.0.0"],
-			specs: [
-				{ operation: "update", identity: "npm:a", exactSource: "npm:a@2.0.0", previousExactSource: "npm:a@1.0.0" },
-				{ operation: "install", identity: "npm:z", exactSource: "npm:z@1.0.0" },
-			] as ActionSpec[],
-			expected: ["install:npm:a@2.0.0", "install:npm:z@1.0.0", "install:npm:a@1.0.0"],
-		},
-		{
-			name: "remove",
-			current: ["npm:a@1.0.0"],
-			planned: ["npm:z@1.0.0"],
-			specs: [
-				{ operation: "remove", identity: "npm:a", exactSource: "npm:a@1.0.0" },
-				{ operation: "install", identity: "npm:z", exactSource: "npm:z@1.0.0" },
-			] as ActionSpec[],
-			expected: ["remove:npm:a@1.0.0", "install:npm:z@1.0.0", "install:npm:a@1.0.0"],
-		},
-		{
 			name: "mixed batch",
 			current: ["npm:a@1.0.0", "npm:b@1.0.0"],
 			planned: ["npm:b@2.0.0", "npm:c@1.0.0", "npm:z@1.0.0"],

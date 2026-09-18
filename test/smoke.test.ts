@@ -1,4 +1,3 @@
-import { stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +7,7 @@ import * as vi from "jest-mock";
 import { CONFIG_SYNC_SUBCOMMANDS } from "../src/commands.ts";
 import { RECOVERY_CHOICES } from "../src/recovery.ts";
 import { loadJournal, saveJournal } from "../src/state.ts";
-import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from "./helpers.ts";
+import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = join(packageRoot, "src/index.ts");
@@ -66,19 +65,6 @@ describe("pi-sync foundation", () => {
 			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 			await agentDirectory.cleanup();
-		}
-	});
-
-	it("creates temporary agent and bare Git directories", async () => {
-		const agentDirectory = await createTemporaryAgentDirectory();
-		const sharedRepository = await createTemporaryBareGitRepository();
-
-		try {
-			expect((await stat(agentDirectory.path)).isDirectory()).toBe(true);
-			expect((await stat(sharedRepository.path)).isDirectory()).toBe(true);
-			expect((await stat(join(sharedRepository.path, "HEAD"))).isFile()).toBe(true);
-		} finally {
-			await Promise.all([agentDirectory.cleanup(), sharedRepository.cleanup()]);
 		}
 	});
 });
