@@ -228,57 +228,73 @@ describe("approved package execution", () => {
 		}
 	});
 
-	it("blocks missing, stale, changed, and mismatched approvals before any command", async () => {
+	it("blocks invalid package approvals before any command", async () => {
 		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
 		const calls: PiCall[] = [];
 		const spec = { operation: "install" as const, identity: "npm:one", exactSource: "npm:one@1.0.0" };
+		const missing = packageFixture([], [spec.exactSource], [spec], { decisions: [] });
+		const valid = packageFixture([], [spec.exactSource], [spec]);
+		const changedApproval = packageFixture([], [spec.exactSource], [spec], {
+			decisions: [
+				{
+					...valid.plan.decisions[0],
+					exactSource: "npm:one@2.0.0",
+				} as PlanDecision,
+			],
+		});
+		const cases: Array<{
+			name: string;
+			fixture: PackageFixture;
+			expected: string;
+			authorizationPlanId?: string;
+			currentSettingsText?: string;
+		}> = [
+			{ name: "missing approval", fixture: missing, expected: "incomplete" },
+			{
+				name: "mismatched authorization",
+				fixture: valid,
+				expected: "authorization",
+				authorizationPlanId: "f".repeat(64),
+			},
+			{
+				name: "changed approval source",
+				fixture: changedApproval,
+				expected: "does not match the exact planned source",
+			},
+			{
+				name: "changed installed source",
+				fixture: valid,
+				expected: "install source changed",
+				currentSettingsText: settings(["npm:one@0.9.0"]),
+			},
+		];
+
 		try {
-			const missing = packageFixture([], [spec.exactSource], [spec], { decisions: [] });
-			await prepareExecution(agentDirectory, missing);
-			await expect(execute({ agentDirectory, fixture: missing, exec: createExec(calls) })).rejects.toThrow(
-				"incomplete",
-			);
-
-			const valid = packageFixture([], [spec.exactSource], [spec]);
-			await prepareExecution(agentDirectory, valid);
-			await expect(
-				executeConfirmedPackagePlan({
-					exec: createExec(calls),
-					cwd: temporary.path,
-					agentDirectory,
-					plan: valid.plan,
-					authorization: { planId: "f".repeat(64) },
-					plannedSettingsText: valid.plannedSettingsText,
-					policy: valid.policy,
-				}),
-			).rejects.toThrow("authorization");
-
-			const action = valid.plan.actions[0];
-			const changedDecision = {
-				...valid.plan.decisions[0],
-				exactSource: "npm:one@2.0.0",
-			};
-			const changedApproval = packageFixture([], [spec.exactSource], [spec], {
-				decisions: [changedDecision as PlanDecision],
-			});
-			await prepareExecution(agentDirectory, changedApproval);
-			await expect(execute({ agentDirectory, fixture: changedApproval, exec: createExec(calls) })).rejects.toThrow(
-				"does not match the exact planned source",
-			);
-			expect(action?.exactPackageSource).toBe(spec.exactSource);
-
-			await writeFile(join(agentDirectory, "settings.json"), settings(["npm:one@0.9.0"]), "utf8");
-			await saveJournal(agentDirectory, {
-				planId: valid.plan.planId,
-				reviewedSharedCommit: valid.plan.sharedCommit,
-				schemaVersion: 1,
-				stage: "machine_files_applied",
-				updatedAt: "2026-01-01T00:00:00.000Z",
-			});
-			await expect(execute({ agentDirectory, fixture: valid, exec: createExec(calls) })).rejects.toThrow(
-				"install source changed",
-			);
+			for (const [index, selected] of cases.entries()) {
+				const agentDirectory = join(temporary.path, `agent-${index}`);
+				await prepareExecution(agentDirectory, selected.fixture);
+				if (selected.currentSettingsText) {
+					await writeFile(join(agentDirectory, "settings.json"), selected.currentSettingsText, "utf8");
+				}
+				let failure: Error | undefined;
+				try {
+					await executeConfirmedPackagePlan({
+						exec: createExec(calls),
+						cwd: temporary.path,
+						agentDirectory,
+						plan: selected.fixture.plan,
+						authorization: {
+							planId: selected.authorizationPlanId ?? selected.fixture.plan.planId,
+						},
+						plannedSettingsText: selected.fixture.plannedSettingsText,
+						policy: selected.fixture.policy,
+					});
+				} catch (error) {
+					if (error instanceof Error) failure = error;
+				}
+				assert.ok(failure, `Expected ${selected.name} to fail.`);
+				expect(failure.message).toContain(selected.expected);
+			}
 			expect(calls).toEqual([]);
 		} finally {
 			await temporary.cleanup();

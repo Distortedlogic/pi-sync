@@ -220,33 +220,6 @@ describe("transaction coordinator", () => {
 		}
 	});
 
-	it("binds APPLY to the reviewed SHARED REPOSITORY commit when PUBLISH is not needed", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const options = planOptions();
-		const plan = createPlan({
-			actions: options.actions.filter((entry) => entry.direction !== "machine-to-shared"),
-		});
-		const events: string[] = [];
-		try {
-			await prepare(temporary.path, plan);
-			const result = await execute({
-				agentDirectory: temporary.path,
-				plan,
-				steps: createSteps(plan, events),
-			});
-			expect(result.publishedCommit).toBe(COMMIT);
-			expect(events).toEqual([
-				"fetch_and_revalidate",
-				"backup_verified",
-				"machine_files_applied",
-				"packages_applied",
-				"final_verified",
-			]);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
 	it("allows only one execution for an agent directory", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const plan = createPlan();

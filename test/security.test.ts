@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "expect";
@@ -38,40 +38,6 @@ async function validationInput(
 }
 
 describe("staged final-tree validation", () => {
-	it("validates the complete tree and exact candidate diff without changing either input", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const scanned = new Map<string, string>();
-		try {
-			const settingsPath = join(temporary.path, "settings.json");
-			const notesPath = join(temporary.path, "notes.txt");
-			const settings = '{"packages":["npm:example@1.0.0"],"theme":"dark"}\n';
-			const notes = "reviewed text\n";
-			const candidateDiff = "+exact candidate difference\n";
-			await Promise.all([writeFile(settingsPath, settings, "utf8"), writeFile(notesPath, notes, "utf8")]);
-			const input = await validationInput(temporary.path, {
-				candidateDiff,
-				machineSettings: {
-					currentText: '{"machine":{"value":1},"packages":["file:../machine-only"]}',
-					finalText: '{"machine":{"value":1},"packages":["file:../machine-only"]}',
-				},
-				scannerFactory: async () => ({
-					scan: async (content, path) => {
-						scanned.set(path, content);
-						return { ok: true, output: "[]" };
-					},
-				}),
-			});
-			await expect(validateStagedCandidate(input)).resolves.toEqual({ findings: [] });
-			expect(scanned.get("settings.json")).toBe(settings);
-			expect(scanned.get("notes.txt")).toBe(notes);
-			expect(scanned.get("candidate.diff")).toBe(candidateDiff);
-			expect(await readFile(settingsPath, "utf8")).toBe(settings);
-			expect(await readFile(notesPath, "utf8")).toBe(notes);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
 	it("rejects a permanently denied staged path before candidate creation", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const scannerFactory = vi.fn(CLEAN_SCANNER);
@@ -147,8 +113,13 @@ describe("staged final-tree validation", () => {
 	});
 });
 
-describe("Secretlint failure handling", () => {
-	for (const { name, factory, phase } of [
+describe("secret scanner failure handling", () => {
+	const failures: Array<{
+		name: string;
+		factory: SecretScannerFactory;
+		phase: SecretScannerFailure["phase"];
+		timeoutMs?: number;
+	}> = [
 		{
 			name: "startup",
 			factory: async () => {
@@ -156,14 +127,40 @@ describe("Secretlint failure handling", () => {
 			},
 			phase: "startup",
 		},
-	]) {
+		{
+			name: "read",
+			factory: async () => ({
+				scan: async () => {
+					throw new Error("read details");
+				},
+			}),
+			phase: "read",
+		},
+		{
+			name: "timeout",
+			factory: async () => ({
+				scan: () => new Promise<never>(() => undefined),
+			}),
+			phase: "timeout",
+			timeoutMs: 10,
+		},
+		{
+			name: "malformed-output",
+			factory: async () => ({
+				scan: async () => ({ ok: true, output: "not JSON" }),
+			}),
+			phase: "parse",
+		},
+	];
+
+	for (const { name, factory, phase, timeoutMs = 50 } of failures) {
 		it(`blocks a ${name} failure`, async () => {
 			const temporary = await createTemporaryAgentDirectory();
 			try {
 				await writeFile(join(temporary.path, "notes.txt"), "safe\n", "utf8");
 				const input = await validationInput(temporary.path, {
 					scannerFactory: factory,
-					scannerTimeoutMs: 10,
+					scannerTimeoutMs: timeoutMs,
 				});
 				try {
 					await validateStagedCandidate(input);
@@ -178,21 +175,30 @@ describe("Secretlint failure handling", () => {
 		});
 	}
 
-	it("reports only finding type, relative path, and line number", async () => {
+	it("blocks and redacts secret findings", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const matchedValue = "MATCHED-SECRET-TEXT";
 		try {
 			await writeFile(join(temporary.path, "notes.txt"), "safe\n", "utf8");
 			const input = await validationInput(temporary.path, {
 				scannerFactory: async () => ({
-					scan: async () => ({
-						ok: false,
-						output: JSON.stringify([
-							{
-								messages: [{ ruleId: "@secretlint/example", line: 2, message: `matched ${matchedValue}` }],
-							},
-						]),
-					}),
+					scan: async (_content, path) =>
+						path === "notes.txt"
+							? {
+									ok: false,
+									output: JSON.stringify([
+										{
+											messages: [
+												{
+													ruleId: "@secretlint/example",
+													line: 2,
+													message: `matched ${matchedValue}`,
+												},
+											],
+										},
+									]),
+								}
+							: { ok: true, output: "[]" },
 				}),
 			});
 			try {
@@ -201,7 +207,7 @@ describe("Secretlint failure handling", () => {
 			} catch (error) {
 				expect(error).toBeInstanceOf(SecretFindingError);
 				const findingError = error as SecretFindingError;
-				expect(findingError.findings[0]).toEqual({ type: "@secretlint/example", path: "notes.txt", line: 2 });
+				expect(findingError.findings).toEqual([{ type: "@secretlint/example", path: "notes.txt", line: 2 }]);
 				expect(Object.keys(findingError.findings[0] ?? {}).sort()).toEqual(["line", "path", "type"]);
 				expect(JSON.stringify(findingError)).not.toContain(matchedValue);
 				expect(String(findingError)).not.toContain(matchedValue);

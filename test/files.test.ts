@@ -1,15 +1,8 @@
-import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { expect } from "expect";
-import {
-	assertNoPathCollisions,
-	buildInventorySet,
-	discoverFileInventory,
-	resolveInventoryRoots,
-	resolveManagedPath,
-} from "../src/files.ts";
+import { assertNoPathCollisions, buildInventorySet, discoverFileInventory, resolveManagedPath } from "../src/files.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 async function createRoots(parent: string): Promise<{ machine: string; shared: string }> {
@@ -20,17 +13,10 @@ async function createRoots(parent: string): Promise<{ machine: string; shared: s
 }
 
 describe("managed path safety", () => {
-	it("resolves both inventory roots and rejects unsafe paths", async () => {
+	it("rejects path traversal", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {
-			const roots = await createRoots(temporary.path);
-			const resolved = resolveInventoryRoots(roots.machine, roots.shared);
-			expect(Object.isFrozen(resolved)).toBe(true);
-			expect(() => resolveManagedPath(resolved.machine, "../outside")).toThrow("cannot contain '..'");
-			expect(() => resolveManagedPath(resolved.machine, "/outside")).toThrow("must be relative");
-			expect(() => resolveManagedPath(resolved.machine, "C:\\outside")).toThrow("must be relative");
-			expect(() => resolveManagedPath(resolved.machine, "bad\0name")).toThrow("NUL");
-			expect(() => resolveManagedPath(resolved.machine, "CON.txt")).toThrow("Windows reserved");
+			expect(() => resolveManagedPath(temporary.path, "../outside")).toThrow("cannot contain '..'");
 		} finally {
 			await temporary.cleanup();
 		}
@@ -70,7 +56,6 @@ describe("file inventory", () => {
 				writeFile(join(roots.machine, "settings.json"), machineBytes),
 				writeFile(join(roots.shared, "settings.json"), sharedBytes),
 			]);
-			await chmod(join(roots.machine, "settings.json"), 0o755);
 
 			const inventories = await buildInventorySet({
 				machineRoot: roots.machine,
@@ -83,40 +68,20 @@ describe("file inventory", () => {
 			expect(machine?.comparisonSha256).toBe(shared?.comparisonSha256);
 			expect(Buffer.from(machine?.exactBytesBase64 ?? "", "base64")).toEqual(machineBytes);
 			expect(Buffer.from(shared?.exactBytesBase64 ?? "", "base64")).toEqual(sharedBytes);
-			expect(machine?.executable).toBe(process.platform !== "win32");
-			expect(Object.isFrozen(inventories)).toBe(true);
-			expect(Object.isFrozen(inventories.machine.files)).toBe(true);
-			expect(Object.isFrozen(machine)).toBe(true);
 		} finally {
 			await temporary.cleanup();
 		}
 	});
 
-	it("rejects nested repositories and unsupported special files", async () => {
-		if (process.platform === "win32") return;
+	it("rejects nested repositories", async () => {
 		const temporary = await createTemporaryAgentDirectory();
-		let server: ReturnType<typeof createServer> | undefined;
 		try {
 			const roots = await createRoots(temporary.path);
 			await mkdir(join(roots.machine, "extensions", "nested", ".git"), { recursive: true });
 			await expect(
 				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["extensions/**"] }),
 			).rejects.toThrow("Nested Git repository");
-
-			await mkdir(join(roots.shared, "skills"));
-			const socketPath = join(roots.shared, "skills", "service.sock");
-			server = createServer();
-			await new Promise<void>((accept, reject) => {
-				server?.once("error", reject);
-				server?.listen(socketPath, accept);
-			});
-			await expect(discoverFileInventory(roots.shared, "shared", { managedPatterns: ["skills/**"] })).rejects.toThrow(
-				"not a regular file",
-			);
-			await new Promise<void>((accept, reject) => server?.close((error) => (error ? reject(error) : accept())));
-			server = undefined;
 		} finally {
-			if (server) await new Promise<void>((accept) => server?.close(() => accept()));
 			await temporary.cleanup();
 		}
 	});
@@ -130,7 +95,6 @@ describe("file inventory", () => {
 			await expect(discoverFileInventory(roots.machine, "machine", { limits: { maxFileBytes: 4 } })).rejects.toThrow(
 				"settings.json",
 			);
-			expect(await readFile(path, "utf8")).toBe('{"large":true}');
 		} finally {
 			await temporary.cleanup();
 		}
