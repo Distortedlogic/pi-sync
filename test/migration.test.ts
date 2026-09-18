@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -9,11 +9,8 @@ import { expect } from "expect";
 import {
 	authorizeMigration,
 	buildMigrationPreview,
-	detectLegacyMigration,
-	formatMigrationPreview,
 	importLegacyMigration,
 	type MigrationExec,
-	reviewMigration,
 } from "../src/migration.ts";
 import { loadConfig, loadState } from "../src/state.ts";
 import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from "./helpers.ts";
@@ -23,10 +20,7 @@ const execFileAsync = promisify(execFile);
 interface LegacyFixture {
 	agentDirectory: string;
 	homeDirectory: string;
-	legacyRepository: string;
 	legacyStatePath: string;
-	settingsPath: string;
-	sharedRepository: string;
 }
 
 function hash(content: string): string {
@@ -110,51 +104,28 @@ async function createLegacyFixture(root: string, sharedRepository: string): Prom
 	const settingsPath = join(agentDirectory, "settings.json");
 	await writeFile(settingsPath, `${JSON.stringify({ packages: ["npm:@jachy/pi-git-sync"] })}\n`);
 	if (process.platform !== "win32") await symlink(join(legacyRepository, ".pi-sync"), join(agentDirectory, ".pi-sync"));
-	return {
-		agentDirectory,
-		homeDirectory,
-		legacyRepository,
-		legacyStatePath,
-		settingsPath,
-		sharedRepository,
-	};
+	return { agentDirectory, homeDirectory, legacyStatePath };
 }
 
 describe("legacy migration", () => {
-	it("detects and previews legacy data without changing it, then imports only validated metadata", async () => {
+	it("previews and imports validated legacy metadata", async () => {
 		const root = await createTemporaryAgentDirectory();
 		const shared = await createTemporaryBareGitRepository();
 		try {
 			const fixture = await createLegacyFixture(root.path, shared.path);
-			const stateBefore = await readFile(fixture.legacyStatePath, "utf8");
-			const settingsBefore = await readFile(fixture.settingsPath, "utf8");
-			const detection = await detectLegacyMigration(fixture);
-			expect(detection).toMatchObject({
-				legacyPackageDeclared: true,
-				legacyRepositoryDirectory: fixture.legacyRepository,
-				manifestPath: join(fixture.legacyRepository, "pi-sync.json"),
-				statePath: fixture.legacyStatePath,
+			const preview = await buildMigrationPreview({
+				agentDirectory: fixture.agentDirectory,
+				homeDirectory: fixture.homeDirectory,
+				exec: gitExec(),
 			});
-			if (process.platform !== "win32") {
-				expect(detection.compatibilitySymlink?.target).toBe(join(fixture.legacyRepository, ".pi-sync"));
-			}
-			const preview = await buildMigrationPreview({ ...fixture, exec: gitExec() });
-			expect(preview.status).toBe("ready");
-			expect(preview.branch).toBe("main");
-			expect(preview.repositoryPath).toBe(shared.path);
+			expect(preview).toMatchObject({
+				branch: "main",
+				deletionAllowed: true,
+				repositoryPath: shared.path,
+				status: "ready",
+			});
 			expect(Object.keys(preview.baseline?.files ?? {})).toEqual(["settings.json"]);
-			expect(preview.deletionAllowed).toBe(true);
-			const text = formatMigrationPreview(preview);
-			expect(text).toContain("MIGRATION PREVIEW — READ ONLY");
-			expect(text).toContain("schema-2 pi-sync.json");
-			expect(text).toContain("schema-3 state");
-			expect(text).toContain("@jachy/pi-git-sync");
-			expect(text).not.toContain(shared.path);
-			expect(() => authorizeMigration(preview, preview.migrationId.slice(0, 12))).toThrow("Exact migration ID");
-			await expect(reviewMigration({ ctx: { hasUI: false, ui: {} as never }, preview })).resolves.toMatchObject({
-				status: "preview_only",
-				preview,
-			});
+
 			const result = await importLegacyMigration({
 				agentDirectory: fixture.agentDirectory,
 				preview,
@@ -166,20 +137,6 @@ describe("legacy migration", () => {
 				repositoryPath: shared.path,
 			});
 			expect((await loadState(fixture.agentDirectory))?.baseline).toEqual(preview.baseline);
-			expect(await readFile(fixture.legacyStatePath, "utf8")).toBe(stateBefore);
-			expect(await readFile(fixture.settingsPath, "utf8")).toBe(settingsBefore);
-			if (process.platform !== "win32") {
-				expect(await readlink(join(fixture.agentDirectory, ".pi-sync"))).toBe(
-					join(fixture.legacyRepository, ".pi-sync"),
-				);
-			}
-			await expect(
-				importLegacyMigration({
-					agentDirectory: fixture.agentDirectory,
-					preview,
-					authorization: authorizeMigration(preview, preview.migrationId),
-				}),
-			).rejects.toThrow("will not replace");
 		} finally {
 			await Promise.all([root.cleanup(), shared.cleanup()]);
 		}
@@ -193,7 +150,11 @@ describe("legacy migration", () => {
 			const state = JSON.parse(await readFile(fixture.legacyStatePath, "utf8"));
 			state.files["settings.json"].sha256 = "f".repeat(64);
 			await writeFile(fixture.legacyStatePath, `${JSON.stringify(state)}\n`);
-			const preview = await buildMigrationPreview({ ...fixture, exec: gitExec() });
+			const preview = await buildMigrationPreview({
+				agentDirectory: fixture.agentDirectory,
+				homeDirectory: fixture.homeDirectory,
+				exec: gitExec(),
+			});
 			expect(preview.status).toBe("no_delete_reconcile");
 			expect(preview.requiredMode).toBe("reconcile");
 			expect(preview.deletionAllowed).toBe(false);

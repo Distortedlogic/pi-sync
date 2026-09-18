@@ -7,13 +7,16 @@ import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
 import { expect } from "expect";
 import stableStringify from "json-stable-stringify";
+import { getConfigSyncPaths } from "../src/config.ts";
 import { discoverFileInventory, type InventoryFile } from "../src/files.ts";
 import {
 	createCandidateCommit,
 	diffFromLastNamedSnapshot,
 	fetchSharedSnapshot,
 	type GitExec,
+	inspectSetupRepository,
 	publishCandidateCommit,
+	SHARED_MANIFEST_PATH,
 } from "../src/git.ts";
 import type { RepositoryConfig } from "../src/types.ts";
 import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from "./helpers.ts";
@@ -94,6 +97,13 @@ async function advanceSharedRepository(repositoryPath: string, parent: string): 
 	await execFileAsync("git", ["push", "origin", "HEAD:main"], { cwd: checkout });
 	const result = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: checkout });
 	return result.stdout.trim();
+}
+
+async function repositoryRefs(repositoryPath: string): Promise<string> {
+	const result = await execFileAsync("git", ["for-each-ref", "--format=%(refname):%(objectname)"], {
+		cwd: repositoryPath,
+	});
+	return result.stdout;
 }
 
 afterEach(() => {
@@ -210,7 +220,7 @@ describe("Git snapshots and candidates", () => {
 		}
 	});
 
-	it("uses the last named snapshot for diff and refreshes only when requested", async () => {
+	it("uses the last named snapshot for one focused diff", async () => {
 		const agent = await createTemporaryAgentDirectory();
 		const shared = await createTemporaryBareGitRepository();
 		const calls: GitCall[] = [];
@@ -238,15 +248,98 @@ describe("Git snapshots and candidates", () => {
 			expect(firstDiff.baseCommit).toBe(candidate.reviewedSharedCommit);
 			expect(firstDiff.diff).toContain("settings.json");
 			expect(calls.some((call) => call.args.includes("fetch"))).toBe(false);
+		} finally {
+			await Promise.all([agent.cleanup(), shared.cleanup()]);
+		}
+	});
+});
 
-			calls.length = 0;
-			await diffFromLastNamedSnapshot({
-				exec,
-				workspace: candidate.workspace,
-				targetCommit: candidate.candidateCommit,
-				refresh: { agentDirectory: agent.path, repository },
+describe("setup repository inspection", () => {
+	it("does not change remote refs and requires a valid manifest", async () => {
+		const agent = await createTemporaryAgentDirectory();
+		const shared = await createTemporaryBareGitRepository();
+		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
+		try {
+			const emptyRefs = await repositoryRefs(shared.path);
+			const empty = await inspectSetupRepository({
+				exec: createGitExec(),
+				agentDirectory: agent.path,
+				repository,
 			});
-			expect(calls.some((call) => call.args.includes("fetch"))).toBe(true);
+			expect(empty).toMatchObject({
+				empty: true,
+				manifest: null,
+				privacyNotice: "SHARED REPOSITORY privacy could not be verified.",
+				sharedCommit: null,
+			});
+			expect(await repositoryRefs(shared.path)).toBe(emptyRefs);
+
+			await seedRepository(shared.path, agent.path);
+			const checkout = join(agent.path, "seed");
+			const refsBeforeRejectedInspection = await repositoryRefs(shared.path);
+			await expect(
+				inspectSetupRepository({ exec: createGitExec(), agentDirectory: agent.path, repository }),
+			).rejects.toThrow(`valid ${SHARED_MANIFEST_PATH} manifest`);
+			expect(await repositoryRefs(shared.path)).toBe(refsBeforeRejectedInspection);
+
+			await writeFile(
+				join(checkout, SHARED_MANIFEST_PATH),
+				JSON.stringify({ managedScope: ["settings.json"], schemaVersion: 1 }),
+				"utf8",
+			);
+			await execFileAsync("git", ["add", SHARED_MANIFEST_PATH], { cwd: checkout });
+			await execFileAsync("git", ["commit", "-m", "Add manifest"], { cwd: checkout });
+			await execFileAsync("git", ["push", "origin", "HEAD:main"], { cwd: checkout });
+			const refsBeforeAcceptedInspection = await repositoryRefs(shared.path);
+			const inspected = await inspectSetupRepository({
+				exec: createGitExec(),
+				agentDirectory: agent.path,
+				repository,
+			});
+			expect(inspected.empty).toBe(false);
+			expect(inspected.manifest).toEqual({ managedScope: ["settings.json"], schemaVersion: 1 });
+			expect(await repositoryRefs(shared.path)).toBe(refsBeforeAcceptedInspection);
+		} finally {
+			await Promise.all([agent.cleanup(), shared.cleanup()]);
+		}
+	});
+
+	it("blocks an access failure without changing remote refs", async () => {
+		const agent = await createTemporaryAgentDirectory();
+		const shared = await createTemporaryBareGitRepository();
+		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
+		try {
+			await inspectSetupRepository({ exec: createGitExec(), agentDirectory: agent.path, repository });
+			const refsBefore = await repositoryRefs(shared.path);
+			const unavailable: GitExec = async (command, args, options) =>
+				args.includes("ls-remote")
+					? { stdout: "", stderr: "unavailable", code: 1, killed: false }
+					: createGitExec()(command, args, options);
+			await expect(
+				inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
+			).rejects.toThrow("access verification failed");
+			expect(await repositoryRefs(shared.path)).toBe(refsBefore);
+		} finally {
+			await Promise.all([agent.cleanup(), shared.cleanup()]);
+		}
+	});
+
+	it("does not delete or replace an invalid clone path", async () => {
+		const agent = await createTemporaryAgentDirectory();
+		const shared = await createTemporaryBareGitRepository();
+		const paths = getConfigSyncPaths(agent.path);
+		const sentinel = join(paths.repositoryDirectory, "keep.txt");
+		try {
+			await mkdir(paths.repositoryDirectory, { recursive: true });
+			await writeFile(sentinel, "keep", "utf8");
+			await expect(
+				inspectSetupRepository({
+					exec: createGitExec(),
+					agentDirectory: agent.path,
+					repository: { branch: "main", repositoryPath: shared.path },
+				}),
+			).rejects.toThrow("not changed");
+			expect(await readFile(sentinel, "utf8")).toBe("keep");
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}

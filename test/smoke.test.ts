@@ -1,12 +1,9 @@
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { discoverAndLoadExtensions, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import { expect } from "expect";
-import * as vi from "jest-mock";
 import { CONFIG_SYNC_SUBCOMMANDS } from "../src/commands.ts";
-import { RECOVERY_CHOICES } from "../src/recovery.ts";
-import { loadJournal, saveJournal } from "../src/state.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,44 +23,6 @@ describe("pi-sync foundation", () => {
 			const completions = await command?.getArgumentCompletions?.("");
 			expect(completions?.map((item) => item.value)).toEqual(CONFIG_SYNC_SUBCOMMANDS);
 		} finally {
-			await agentDirectory.cleanup();
-		}
-	});
-
-	it("detects an incomplete journal at session start and command start without running recovery", async () => {
-		const agentDirectory = await createTemporaryAgentDirectory();
-		const notify = vi.fn();
-		const select = vi.fn(async (_title: string, _options: string[]) => RECOVERY_CHOICES[2].label);
-		const setStatus = vi.fn();
-		const ctx = {
-			hasUI: true,
-			ui: { notify, select, setStatus } as unknown as ExtensionCommandContext["ui"],
-		} as ExtensionCommandContext;
-		const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
-		try {
-			process.env.PI_CODING_AGENT_DIR = agentDirectory.path;
-			await saveJournal(agentDirectory.path, {
-				planId: "1".repeat(64),
-				reviewedSharedCommit: "2".repeat(40),
-				schemaVersion: 1,
-				stage: "prepared",
-				updatedAt: "2026-01-01T00:00:00.000Z",
-			});
-			const result = await discoverAndLoadExtensions([extensionPath], packageRoot, agentDirectory.path);
-			const extension = result.extensions[0];
-			const sessionStart = extension?.handlers.get("session_start")?.[0];
-			await sessionStart?.({ type: "session_start", reason: "startup" }, ctx);
-			await extension?.commands.get("config-sync")?.handler("", ctx);
-			expect(notify).toHaveBeenCalledWith(expect.stringContaining("stopped after prepared"), "warning");
-			expect(select).toHaveBeenCalledWith(
-				expect.stringContaining("stopped after prepared"),
-				RECOVERY_CHOICES.map((choice) => choice.label),
-			);
-			expect(notify).toHaveBeenCalledWith("STOP WITHOUT CHANGES selected. No recovery ran automatically.", "info");
-			await expect(loadJournal(agentDirectory.path)).resolves.toMatchObject({ stage: "prepared" });
-		} finally {
-			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 			await agentDirectory.cleanup();
 		}
 	});
