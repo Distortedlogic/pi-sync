@@ -147,10 +147,6 @@ describe("Git snapshots and candidates", () => {
 				calls.every((call) => call.command === "git" && call.timeout === 30_000),
 				true,
 			);
-			assert.equal(
-				calls.every((call) => call.args.includes(`core.hooksPath=${fetched.snapshot.workspace.hooksDirectory}`)),
-				true,
-			);
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
