@@ -1,7 +1,8 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import { expect } from "expect";
 import {
 	assertNoPathCollisions,
 	buildInventorySet,

@@ -1,21 +1,24 @@
 import { stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { discoverAndLoadExtensions, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import { CONFIG_SYNC_SUBCOMMANDS } from "../src/commands.ts";
 import { RECOVERY_CHOICES } from "../src/recovery.ts";
 import { loadJournal, saveJournal } from "../src/state.ts";
 import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from "./helpers.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const extensionPath = join(packageRoot, "src/index.ts");
 
 describe("pi-sync foundation", () => {
 	it("loads the extension and registers /config-sync", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 
 		try {
-			const result = await discoverAndLoadExtensions([join(packageRoot, "index.ts")], packageRoot, agentDirectory.path);
+			const result = await discoverAndLoadExtensions([extensionPath], packageRoot, agentDirectory.path);
 
 			expect(result.errors).toEqual([]);
 			expect(result.extensions).toHaveLength(1);
@@ -37,8 +40,9 @@ describe("pi-sync foundation", () => {
 			hasUI: true,
 			ui: { notify, select, setStatus } as unknown as ExtensionCommandContext["ui"],
 		} as ExtensionCommandContext;
+		const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
 		try {
-			vi.stubEnv("PI_CODING_AGENT_DIR", agentDirectory.path);
+			process.env.PI_CODING_AGENT_DIR = agentDirectory.path;
 			await saveJournal(agentDirectory.path, {
 				planId: "1".repeat(64),
 				reviewedSharedCommit: "2".repeat(40),
@@ -46,7 +50,7 @@ describe("pi-sync foundation", () => {
 				stage: "prepared",
 				updatedAt: "2026-01-01T00:00:00.000Z",
 			});
-			const result = await discoverAndLoadExtensions([join(packageRoot, "index.ts")], packageRoot, agentDirectory.path);
+			const result = await discoverAndLoadExtensions([extensionPath], packageRoot, agentDirectory.path);
 			const extension = result.extensions[0];
 			const sessionStart = extension?.handlers.get("session_start")?.[0];
 			await sessionStart?.({ type: "session_start", reason: "startup" }, ctx);
@@ -59,7 +63,8 @@ describe("pi-sync foundation", () => {
 			expect(notify).toHaveBeenCalledWith("STOP WITHOUT CHANGES selected. No recovery ran automatically.", "info");
 			await expect(loadJournal(agentDirectory.path)).resolves.toMatchObject({ stage: "prepared" });
 		} finally {
-			vi.unstubAllEnvs();
+			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 			await agentDirectory.cleanup();
 		}
 	});

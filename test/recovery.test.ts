@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import {
 	authorizeRestorePlan,
 	buildRestorePlan,

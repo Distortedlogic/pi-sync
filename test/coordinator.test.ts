@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import {
 	executeConfirmedTransaction,
 	nextTransactionRecoveryStep,
@@ -258,9 +261,8 @@ describe("transaction coordinator", () => {
 		}
 	});
 
-	it.each(TRANSACTION_JOURNAL_STAGES)(
-		"leaves a deterministic recovery step after an interruption at %s",
-		async (targetStage) => {
+	for (const targetStage of TRANSACTION_JOURNAL_STAGES) {
+		it(`leaves a deterministic recovery step after an interruption at ${targetStage}`, async () => {
 			const temporary = await createTemporaryAgentDirectory();
 			const plan = createPlan();
 			try {
@@ -281,8 +283,8 @@ describe("transaction coordinator", () => {
 			} finally {
 				await temporary.cleanup();
 			}
-		},
-	);
+		});
+	}
 
 	it("allows only one execution for an agent directory", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -323,33 +325,35 @@ describe("transaction coordinator", () => {
 		}
 	});
 
-	it.each([
+	for (const { name, override } of [
 		{ name: "THIS MACHINE changed", override: { machineFingerprint: "9".repeat(64) } },
 		{ name: "SHARED REPOSITORY changed", override: { sharedFingerprint: "9".repeat(64) } },
 		{ name: "managed scope changed", override: { effectivePaths: ["changed-scope.json"] } },
 		{ name: "policy changed", override: { policyFingerprint: "9".repeat(64) } },
 		{ name: "package source changed", override: { packageFingerprint: "9".repeat(64) } },
-	])("rejects a stale full plan when $name", async ({ override }) => {
-		const temporary = await createTemporaryAgentDirectory();
-		const plan = createPlan();
-		const stale = createPlan(override);
-		const events: string[] = [];
-		try {
-			await prepare(temporary.path, plan);
-			await expect(
-				execute({
-					agentDirectory: temporary.path,
-					plan,
-					steps: createSteps(plan, events, { fetchAndRebuildPlan: async () => stale }),
-				}),
-			).rejects.toBeInstanceOf(TransactionPlanExpiredError);
-			expect(events).toEqual([]);
-			expect(await loadJournal(temporary.path)).toBeUndefined();
-			expect((await loadState(temporary.path))?.pendingOperation).toBeNull();
-		} finally {
-			await temporary.cleanup();
-		}
-	});
+	]) {
+		it(`rejects a stale full plan when ${name}`, async () => {
+			const temporary = await createTemporaryAgentDirectory();
+			const plan = createPlan();
+			const stale = createPlan(override);
+			const events: string[] = [];
+			try {
+				await prepare(temporary.path, plan);
+				await expect(
+					execute({
+						agentDirectory: temporary.path,
+						plan,
+						steps: createSteps(plan, events, { fetchAndRebuildPlan: async () => stale }),
+					}),
+				).rejects.toBeInstanceOf(TransactionPlanExpiredError);
+				expect(events).toEqual([]);
+				expect(await loadJournal(temporary.path)).toBeUndefined();
+				expect((await loadState(temporary.path))?.pendingOperation).toBeNull();
+			} finally {
+				await temporary.cleanup();
+			}
+		});
+	}
 
 	it("makes no machine change when PUBLISH fails", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -394,7 +398,7 @@ describe("transaction coordinator", () => {
 						},
 					}),
 				});
-				expect.fail("Expected recovery failure");
+				assert.fail("Expected recovery failure");
 			} catch (error) {
 				failure = error as TransactionRecoveryRequiredError;
 			}

@@ -2,10 +2,11 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
+import { expect } from "expect";
 import stableStringify from "json-stable-stringify";
-import { describe, expect, it } from "vitest";
 import { createDefaultLocalPolicy, getConfigSyncPaths } from "../src/config.ts";
 import { buildInventorySet, type FileInventory, type InventoryFile, type InventorySet } from "../src/files.ts";
 import {
@@ -201,7 +202,9 @@ async function applyPlan(options: {
 }
 
 describe("two-machine end-to-end synchronization", () => {
-	it("sets up a second machine, publishes its change, and applies the exact commit on the first machine", async () => {
+	it("sets up a second machine, publishes its change, and applies the exact commit on the first machine", {
+		timeout: 15_000,
+	}, async () => {
 		const machineOne = await createTemporaryAgentDirectory();
 		const machineTwo = await createTemporaryAgentDirectory();
 		const seed = await createTemporaryAgentDirectory();
@@ -312,5 +315,5 @@ describe("two-machine end-to-end synchronization", () => {
 		} finally {
 			await Promise.all([machineOne.cleanup(), machineTwo.cleanup(), seed.cleanup(), shared.cleanup()]);
 		}
-	}, 15_000);
+	});
 });

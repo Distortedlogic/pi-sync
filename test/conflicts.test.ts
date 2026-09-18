@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import {
 	buildConflictSummaries,
 	CONFLICT_CHOICES,
@@ -99,19 +101,21 @@ describe("conflict review", () => {
 		expect(decisions).toEqual([decision("use_machine_both")]);
 	});
 
-	it.each(CONFLICT_CHOICES)("creates a new final plan for $label", ({ choice }) => {
-		const originalPlan = conflictPlan();
-		const selectedDecision = decision(choice);
-		const resolution = rebuildConflictPlan({
-			originalPlan,
-			decisions: [selectedDecision],
-			rebuild: (decisions) => conflictPlan(decisions as PlanDecision[]),
+	for (const { choice, label } of CONFLICT_CHOICES) {
+		it(`creates a new final plan for ${label}`, () => {
+			const originalPlan = conflictPlan();
+			const selectedDecision = decision(choice);
+			const resolution = rebuildConflictPlan({
+				originalPlan,
+				decisions: [selectedDecision],
+				rebuild: (decisions) => conflictPlan(decisions as PlanDecision[]),
+			});
+			expect(resolution.plan.planId).not.toBe(originalPlan.planId);
+			expect(resolution.plan.decisions).toContainEqual(selectedDecision);
+			expect(resolution.requiresNewPlan).toBe(true);
+			expect(resolution.stopped).toBe(choice === "keep_both_stop" || choice === "merge_workspace");
 		});
-		expect(resolution.plan.planId).not.toBe(originalPlan.planId);
-		expect(resolution.plan.decisions).toContainEqual(selectedDecision);
-		expect(resolution.requiresNewPlan).toBe(true);
-		expect(resolution.stopped).toBe(choice === "keep_both_stop" || choice === "merge_workspace");
-	});
+	}
 
 	it("rejects a rebuilt plan that does not contain each exact conflict choice", () => {
 		const originalPlan = conflictPlan();

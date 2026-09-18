@@ -16,13 +16,12 @@
 		"pack:check": "npm pack --dry-run",
 		"prepublishOnly": "npm run release:check",
 		"release:check": "npm run check && npm audit --omit=dev && npm run pack:check",
-		"test": "vitest run",
-		"test:e2e": "vitest run test/two-machine.test.ts --no-file-parallelism",
-		"test:unit": "vitest run --exclude test/two-machine.test.ts",
-		"typecheck": "tsc"
+		"test": "npm run test:unit && npm run test:e2e",
+		"test:e2e": "node --experimental-strip-types --test test/two-machine.test.ts",
+		"test:unit": "node --experimental-strip-types --test test/commands.test.ts test/conflicts.test.ts test/coordinator.test.ts test/files.test.ts test/git.test.ts test/migration.test.ts test/package-execution.test.ts test/plan.test.ts test/recovery.test.ts test/security.test.ts test/settings.test.ts test/setup.test.ts test/smoke.test.ts test/state.test.ts test/transaction.test.ts test/ui.test.ts",
+		"typecheck": "tsc --noEmit"
 	},
 	"files": [
-		"index.ts",
 		"src",
 		"README.md",
 		"RELEASE.md",
@@ -30,7 +29,7 @@
 	],
 	"pi": {
 		"extensions": [
-			"./index.ts"
+			"./src/index.ts"
 		]
 	},
 	"dependencies": {
@@ -52,8 +51,8 @@
 	"peerDependencies": {
 		"@earendil-works/pi-agent-core": "*",
 		"@earendil-works/pi-ai": "*",
-		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*",
+		"@earendil-works/pi-coding-agent": ">=0.85.1 <1",
+		"@earendil-works/pi-tui": ">=0.85.1 <1",
 		"typebox": "*"
 	},
 	"devDependencies": {
@@ -65,9 +64,10 @@
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
 		"@types/write-file-atomic": "4.0.3",
+		"expect": "30.2.0",
 		"fast-check": "4.3.0",
+		"jest-mock": "30.2.0",
 		"typebox": "1.3.7",
-		"typescript": "5.9.3",
-		"vitest": "4.1.9"
+		"typescript": "~7.0.2"
 	}
 }

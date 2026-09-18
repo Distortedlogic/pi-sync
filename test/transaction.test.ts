@@ -1,7 +1,9 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import { expect } from "expect";
 import type { InventoryFile } from "../src/files.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
 import { getBackupMetadataPath } from "../src/state.ts";
@@ -257,7 +259,7 @@ describe("machine apply", () => {
 					applySet: applySet(current, final),
 					operations,
 				});
-				expect.fail("Expected apply failure");
+				assert.fail("Expected apply failure");
 			} catch (error) {
 				expect(error).toBeInstanceOf(MachineApplyError);
 				expect((error as MachineApplyError).restored).toBe(true);
@@ -301,7 +303,7 @@ describe("machine apply", () => {
 					applySet: applySet(current, final),
 					operations,
 				});
-				expect.fail("Expected restore failure");
+				assert.fail("Expected restore failure");
 			} catch (error) {
 				expect(error).toBeInstanceOf(MachineApplyError);
 				expect((error as MachineApplyError).restored).toBe(false);

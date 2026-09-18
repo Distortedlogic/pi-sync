@@ -1,5 +1,6 @@
+import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { expect } from "expect";
 import {
 	CONFIG_SYNC_SUBCOMMANDS,
 	deriveFooterStatus,

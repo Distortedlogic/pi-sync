@@ -2,9 +2,10 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { expect } from "expect";
 import {
 	authorizeMigration,
 	buildMigrationPreview,

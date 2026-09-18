@@ -2,10 +2,11 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
+import { expect } from "expect";
 import stableStringify from "json-stable-stringify";
-import { afterEach, describe, expect, it } from "vitest";
 import { discoverFileInventory, type InventoryFile } from "../src/files.ts";
 import {
 	createCandidateCommit,

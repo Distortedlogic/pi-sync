@@ -1,5 +1,6 @@
 import { lstat, readFile, writeFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import { expect } from "expect";
 import {
 	activateScopeApprovalForPlan,
 	approveScopeExpansion,

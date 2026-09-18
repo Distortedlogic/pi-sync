@@ -1,7 +1,12 @@
 node_modules/
-coverage/
 dist/
+coverage/
+*.tsbuildinfo
 *.log
 *.tgz
-PRELOAD.md
+.DS_Store
+.env
+.pi/tmp
+.pi/readcache
 TREE.txt
+PRELOAD.md

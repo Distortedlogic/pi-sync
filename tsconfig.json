@@ -1,14 +1,15 @@
 {
 	"compilerOptions": {
 		"allowImportingTsExtensions": true,
+		"erasableSyntaxOnly": true,
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"noEmit": true,
 		"skipLibCheck": true,
 		"strict": true,
-		"target": "ES2022",
+		"target": "ES2024",
 		"types": ["node"],
 		"verbatimModuleSyntax": true
 	},
-	"include": ["index.ts", "src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+	"include": [".forgejo/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }

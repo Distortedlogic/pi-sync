@@ -1,5 +1,7 @@
+import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import {
 	type BuildPlanArtifactOptions,
 	buildPlanArtifact,
@@ -164,8 +166,7 @@ describe("canonical plan artifact", () => {
 describe("plan and receipt formatting", () => {
 	it("uses fixed sections and unambiguous destination text", () => {
 		const text = formatPlanText(plan(), "final-plan");
-		expect(text).toMatchInlineSnapshot(`
-"## FINAL RESULT
+		expect(text).toBe(`## FINAL RESULT
 - Final immutable plan 55f162ec8dee71fd6809440678f21288163bd08186c83fa55c44ee4fd4f6799d (55f162ec8dee)
 - Mode: RECONCILE
 - SHARED REPOSITORY checked at: 2026-01-01T00:00:01.000Z
@@ -187,8 +188,7 @@ describe("plan and receipt formatting", () => {
 
 ## WILL NOT HAPPEN
 - No path outside the reviewed plan will change. | Destination: NONE
-- Seven unchanged paths remain unchanged. | Destination: NONE | Count: 7"
-`);
+- Seven unchanged paths remain unchanged. | Destination: NONE | Count: 7`);
 		expect(text).not.toMatch(/\b(local|remote|added|removed|pull|push)\b/i);
 		for (const path of ["settings.json", "old.json", "npm:example", "conflict.json"]) expect(text).toContain(path);
 	});
@@ -248,7 +248,7 @@ describe("plan review", () => {
 		});
 		const result = await reviewSyncPlan({ ctx, previewPlan: plan(), decisionRequirements: requirements, rebuild });
 		expect(result.status).toBe("confirmed");
-		expect(rebuild).toHaveBeenCalledOnce();
+		expect(rebuild).toHaveBeenCalledTimes(1);
 		expect(rebuild.mock.calls[0]?.[0].map(({ category }) => category)).toEqual([
 			"policy",
 			"conflict",
@@ -260,18 +260,24 @@ describe("plan review", () => {
 		expect(input).toHaveBeenCalledWith("Enter exact plan ID", rebuilt?.planId);
 	});
 
-	it.each(["print", "json"] as const)("returns the plan only in %s mode", async (mode) => {
-		const rebuild = vi.fn();
-		const previewPlan = plan();
-		const result = await reviewSyncPlan({
-			ctx: context({ mode }),
-			previewPlan,
-			decisionRequirements: requirements,
-			rebuild,
+	for (const mode of ["print", "json"] as const) {
+		it(`returns the plan only in ${mode} mode`, async () => {
+			const rebuild = vi.fn();
+			const previewPlan = plan();
+			const result = await reviewSyncPlan({
+				ctx: context({ mode }),
+				previewPlan,
+				decisionRequirements: requirements,
+				rebuild,
+			});
+			expect(result).toEqual({
+				status: "plan_only",
+				plan: previewPlan,
+				text: formatPlanText(previewPlan, "final-plan"),
+			});
+			expect(rebuild).not.toHaveBeenCalled();
 		});
-		expect(result).toEqual({ status: "plan_only", plan: previewPlan, text: formatPlanText(previewPlan, "final-plan") });
-		expect(rebuild).not.toHaveBeenCalled();
-	});
+	}
 
 	it("cancels without rebuilding or authorizing changes", async () => {
 		const rebuild = vi.fn();
@@ -303,7 +309,7 @@ describe("plan review", () => {
 			decisionRequirements: [],
 			rebuild: () => rebuilt,
 		});
-		expect(custom).toHaveBeenCalledOnce();
+		expect(custom).toHaveBeenCalledTimes(1);
 		expect(result.status).toBe("id_mismatch");
 		expect(() => authorizePlanExecution(rebuilt, rebuilt.shortPlanId)).toThrow("Exact plan ID");
 	});

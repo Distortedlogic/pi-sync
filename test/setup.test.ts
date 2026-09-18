@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import { getConfigSyncPaths } from "../src/config.ts";
 import { type GitExec, inspectSetupRepository, SHARED_MANIFEST_PATH } from "../src/git.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
@@ -116,8 +118,8 @@ describe("first synchronization setup", () => {
 			"Select one first synchronization mode",
 			FIRST_SYNC_MODE_OPTIONS.map((option) => option.label),
 		);
-		expect(inspectRepository).toHaveBeenCalledOnce();
-		expect(generatePlan).toHaveBeenCalledOnce();
+		expect(inspectRepository).toHaveBeenCalledTimes(1);
+		expect(generatePlan).toHaveBeenCalledTimes(1);
 		expect(generatePlan).toHaveBeenCalledWith(
 			expect.objectContaining({ baseline: null, mode: "apply", sharedCommit: COMMIT }),
 		);
@@ -201,25 +203,27 @@ describe("setup repository inspection", () => {
 		}
 	});
 
-	it.each(["offline", "authentication"])("blocks %s failure without changing SHARED REPOSITORY refs", async () => {
-		const agent = await createTemporaryAgentDirectory();
-		const shared = await createTemporaryBareGitRepository();
-		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
-		try {
-			await inspectSetupRepository({ exec: gitExec(), agentDirectory: agent.path, repository });
-			const refsBefore = await repositoryRefs(shared.path);
-			const unavailable: GitExec = async (command, args, options) =>
-				args.includes("ls-remote")
-					? { stdout: "", stderr: "unavailable", code: 1, killed: false }
-					: gitExec()(command, args, options);
-			await expect(
-				inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
-			).rejects.toThrow("access verification failed");
-			expect(await repositoryRefs(shared.path)).toBe(refsBefore);
-		} finally {
-			await Promise.all([agent.cleanup(), shared.cleanup()]);
-		}
-	});
+	for (const failure of ["offline", "authentication"]) {
+		it(`blocks ${failure} failure without changing SHARED REPOSITORY refs`, async () => {
+			const agent = await createTemporaryAgentDirectory();
+			const shared = await createTemporaryBareGitRepository();
+			const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
+			try {
+				await inspectSetupRepository({ exec: gitExec(), agentDirectory: agent.path, repository });
+				const refsBefore = await repositoryRefs(shared.path);
+				const unavailable: GitExec = async (command, args, options) =>
+					args.includes("ls-remote")
+						? { stdout: "", stderr: "unavailable", code: 1, killed: false }
+						: gitExec()(command, args, options);
+				await expect(
+					inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
+				).rejects.toThrow("access verification failed");
+				expect(await repositoryRefs(shared.path)).toBe(refsBefore);
+			} finally {
+				await Promise.all([agent.cleanup(), shared.cleanup()]);
+			}
+		});
+	}
 
 	it("does not delete or replace an existing invalid clone path", async () => {
 		const agent = await createTemporaryAgentDirectory();

@@ -1,6 +1,9 @@
+import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, it } from "node:test";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import { discoverFileInventory } from "../src/files.ts";
 import {
@@ -145,7 +148,7 @@ describe("staged final-tree validation", () => {
 });
 
 describe("Secretlint failure handling", () => {
-	it.each([
+	for (const { name, factory, phase } of [
 		{
 			name: "startup",
 			factory: async () => {
@@ -179,25 +182,27 @@ describe("Secretlint failure handling", () => {
 			factory: async () => ({ scan: async () => ({ ok: true, output: "not JSON" }) }),
 			phase: "parse",
 		},
-	])("blocks a $name failure", async ({ factory, phase }) => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			await writeFile(join(temporary.path, "notes.txt"), "safe\n", "utf8");
-			const input = await validationInput(temporary.path, {
-				scannerFactory: factory,
-				scannerTimeoutMs: 10,
-			});
+	]) {
+		it(`blocks a ${name} failure`, async () => {
+			const temporary = await createTemporaryAgentDirectory();
 			try {
-				await validateStagedCandidate(input);
-				expect.fail("Expected scanner failure");
-			} catch (error) {
-				expect(error).toBeInstanceOf(SecretScannerFailure);
-				expect((error as SecretScannerFailure).phase).toBe(phase);
+				await writeFile(join(temporary.path, "notes.txt"), "safe\n", "utf8");
+				const input = await validationInput(temporary.path, {
+					scannerFactory: factory,
+					scannerTimeoutMs: 10,
+				});
+				try {
+					await validateStagedCandidate(input);
+					assert.fail("Expected scanner failure");
+				} catch (error) {
+					expect(error).toBeInstanceOf(SecretScannerFailure);
+					expect((error as SecretScannerFailure).phase).toBe(phase);
+				}
+			} finally {
+				await temporary.cleanup();
 			}
-		} finally {
-			await temporary.cleanup();
-		}
-	});
+		});
+	}
 
 	it("reports only finding type, relative path, and line number", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -218,7 +223,7 @@ describe("Secretlint failure handling", () => {
 			});
 			try {
 				await validateStagedCandidate(input);
-				expect.fail("Expected secret finding");
+				assert.fail("Expected secret finding");
 			} catch (error) {
 				expect(error).toBeInstanceOf(SecretFindingError);
 				const findingError = error as SecretFindingError;
@@ -237,7 +242,7 @@ describe("Secretlint failure handling", () => {
 		try {
 			await writeFile(
 				join(temporary.path, "key.txt"),
-				"-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n",
+				["-----BEGIN " + "PRIVATE KEY-----", "not-a-real-key", "-----END " + "PRIVATE KEY-----", ""].join("\n"),
 				"utf8",
 			);
 			const input = await validationInput(temporary.path, { scannerFactory: undefined });

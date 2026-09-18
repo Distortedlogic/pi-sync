@@ -1,5 +1,6 @@
+import { describe, it } from "node:test";
+import { expect } from "expect";
 import fc from "fast-check";
-import { describe, expect, it } from "vitest";
 import type { FileInventory, InventoryFile } from "../src/files.ts";
 import { classifyFile, createSyncPlan, type FileActionName, type SyncMode, sortPlanActions } from "../src/plan.ts";
 
@@ -120,14 +121,16 @@ const TRUTH_TABLE: TruthCase[] = [
 ];
 
 describe("three-way classifier", () => {
-	it.each(TRUTH_TABLE)("classifies $name", ({ baseline, machine, shared, expected }) => {
-		const action = classifyFile(PATH, baseline, machine, shared);
-		expect(action?.action).toBe(expected);
-		if (action) {
-			expect(action.reason.length).toBeGreaterThan(0);
-			expect(action.finalResult.length).toBeGreaterThan(0);
-		}
-	});
+	for (const { name, baseline, machine, shared, expected } of TRUTH_TABLE) {
+		it(`classifies ${name}`, () => {
+			const action = classifyFile(PATH, baseline, machine, shared);
+			expect(action?.action).toBe(expected);
+			if (action) {
+				expect(action.reason.length).toBeGreaterThan(0);
+				expect(action.finalResult.length).toBeGreaterThan(0);
+			}
+		});
+	}
 
 	it("uses canonical settings content for equality while preserving exact hashes", () => {
 		const machine = file(4, 5);

@@ -1,8 +1,11 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { describe, it } from "node:test";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { expect } from "expect";
+import * as vi from "jest-mock";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import {
 	executeConfirmedPackagePlan,
@@ -347,7 +350,7 @@ describe("approved package execution", () => {
 });
 
 describe("package rollback", () => {
-	it.each([
+	for (const { name, current, planned, specs, expected } of [
 		{
 			name: "install",
 			current: [],
@@ -398,29 +401,31 @@ describe("package rollback", () => {
 				"install:npm:a@1.0.0",
 			],
 		},
-	])("reverses a completed $name action in reverse order", async ({ current, planned, specs, expected }) => {
-		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
-		const fixture = packageFixture(current, planned, specs);
-		const calls: PiCall[] = [];
-		const rememberApprovals = vi.fn(async () => {});
-		try {
-			await prepareExecution(agentDirectory, fixture);
-			await expect(
-				execute({
-					agentDirectory,
-					fixture,
-					exec: createExec(calls, (args) => args[1] === "npm:z@1.0.0"),
-					rememberApprovals,
-				}),
-			).rejects.toBeInstanceOf(PackageExecutionError);
-			expect(calls.map(({ args }) => args.join(":"))).toEqual(expected);
-			expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.currentSettingsText);
-			expect(rememberApprovals).not.toHaveBeenCalled();
-		} finally {
-			await temporary.cleanup();
-		}
-	});
+	]) {
+		it(`reverses a completed ${name} action in reverse order`, async () => {
+			const temporary = await createTemporaryAgentDirectory();
+			const agentDirectory = join(temporary.path, "agent");
+			const fixture = packageFixture(current, planned, specs);
+			const calls: PiCall[] = [];
+			const rememberApprovals = vi.fn(async () => {});
+			try {
+				await prepareExecution(agentDirectory, fixture);
+				await expect(
+					execute({
+						agentDirectory,
+						fixture,
+						exec: createExec(calls, (args) => args[1] === "npm:z@1.0.0"),
+						rememberApprovals,
+					}),
+				).rejects.toBeInstanceOf(PackageExecutionError);
+				expect(calls.map(({ args }) => args.join(":"))).toEqual(expected);
+				expect(await readFile(join(agentDirectory, "settings.json"), "utf8")).toBe(fixture.currentSettingsText);
+				expect(rememberApprovals).not.toHaveBeenCalled();
+			} finally {
+				await temporary.cleanup();
+			}
+		});
+	}
 
 	it("reports rollback errors separately from the original failure", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -442,7 +447,7 @@ describe("package rollback", () => {
 					fixture,
 					exec: createExec(calls, (args) => args[1] === "npm:z@1.0.0" || args[0] === "remove"),
 				});
-				expect.fail("Expected package failure");
+				assert.fail("Expected package failure");
 			} catch (error) {
 				expect(error).toBeInstanceOf(PackageExecutionError);
 				const failure = error as PackageExecutionError;
