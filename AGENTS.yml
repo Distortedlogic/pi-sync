@@ -6,3 +6,4 @@ pi-preload:
     - "package.json"
     - "tsconfig.json"
     - "src/**/*.ts"
+    - "test/**/*.ts"
