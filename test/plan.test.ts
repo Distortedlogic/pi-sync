@@ -1,7 +1,15 @@
 import { describe, it } from "node:test";
 import { expect } from "expect";
 import type { FileInventory, InventoryFile } from "../src/files.ts";
-import { classifyFile, createSyncPlan, type FileActionName, sortPlanActions } from "../src/plan.ts";
+import {
+	type BuildPlanArtifactOptions,
+	buildPlanArtifact,
+	classifyFile,
+	createSyncPlan,
+	type FileActionName,
+	type PlanArtifactAction,
+	sortPlanActions,
+} from "../src/plan.ts";
 
 const PATH = "settings.json";
 
@@ -42,6 +50,46 @@ interface TruthCase {
 const BASELINE = file(1);
 const MACHINE_CHANGE = file(2);
 const SHARED_CHANGE = file(3);
+const ARTIFACT_HASHES = ["a", "b", "c", "d", "e"].map((value) => value.repeat(64));
+
+function artifactAction(overrides: Partial<PlanArtifactAction> = {}): PlanArtifactAction {
+	return {
+		action: "WRITE IN SHARED REPOSITORY",
+		codeExecution: false,
+		destination: "SHARED REPOSITORY",
+		direction: "machine-to-shared",
+		finalResult: "settings.json in SHARED REPOSITORY will match THIS MACHINE.",
+		path: "settings.json",
+		reason: "THIS MACHINE changed the tracked file.",
+		resultSha256: ARTIFACT_HASHES[1],
+		risk: "write",
+		sourceSha256: ARTIFACT_HASHES[0],
+		...overrides,
+	};
+}
+
+function artifactOptions(overrides: Partial<BuildPlanArtifactOptions> = {}): BuildPlanArtifactOptions {
+	return {
+		actions: [artifactAction()],
+		baselineCommit: "1".repeat(40),
+		createdAt: "2026-01-01T00:00:00.000Z",
+		decisions: [],
+		effectivePaths: ["settings.json"],
+		finalMachineTree: {},
+		finalSharedTree: {},
+		machineFingerprint: ARTIFACT_HASHES[0],
+		mode: "reconcile",
+		noOpEffects: [],
+		packageFingerprint: ARTIFACT_HASHES[2],
+		policyFingerprint: ARTIFACT_HASHES[3],
+		prohibitedEffects: [],
+		remoteCheckedAt: "2026-01-01T00:00:01.000Z",
+		sharedCommit: "2".repeat(40),
+		sharedFingerprint: ARTIFACT_HASHES[4],
+		scopeExpansion: null,
+		...overrides,
+	};
+}
 
 const TRUTH_TABLE: TruthCase[] = [
 	{ name: "first sync with both absent" },
@@ -161,27 +209,56 @@ describe("three-way classifier", () => {
 	});
 });
 
-describe("mode plans", () => {
-	it("blocks PUBLISH when APPLY is required", () => {
-		const plan = createSyncPlan({
-			mode: "publish",
-			machine: inventory("machine", [1]),
-			shared: inventory("shared", [2]),
-			baseline: inventory("baseline", [1]),
-		});
-		expect(plan.blocked).toBe(true);
-		expect(plan.blockers[0]).toContain("requires APPLY");
+describe("canonical plan artifact", () => {
+	it("changes its full ID when an immutable security field changes", () => {
+		const first = buildPlanArtifact(artifactOptions());
+		const changed = buildPlanArtifact(
+			artifactOptions({ actions: [artifactAction({ resultSha256: "f".repeat(64) })] }),
+		);
+
+		expect(first.planId).toMatch(/^[a-f0-9]{64}$/);
+		expect(first.shortPlanId).toBe(first.planId.slice(0, 12));
+		expect(changed.planId).not.toBe(first.planId);
+		expect(Object.isFrozen(first)).toBe(true);
+		expect(Object.isFrozen(first.actions)).toBe(true);
 	});
 
-	it("blocks APPLY when PUBLISH is required", () => {
-		const plan = createSyncPlan({
-			mode: "apply",
-			machine: inventory("machine", [2]),
-			shared: inventory("shared", [1]),
-			baseline: inventory("baseline", [1]),
-		});
-		expect(plan.blocked).toBe(true);
-		expect(plan.blockers[0]).toContain("requires PUBLISH");
+	it("rejects a write with a destination that does not match its direction or name", () => {
+		expect(() =>
+			buildPlanArtifact(artifactOptions({ actions: [artifactAction({ destination: "THIS MACHINE" })] })),
+		).toThrow("wrong destination");
+		expect(() =>
+			buildPlanArtifact(
+				artifactOptions({
+					actions: [
+						artifactAction({
+							destination: "BASELINE",
+							direction: "baseline-only",
+							risk: "baseline",
+						}),
+					],
+				}),
+			),
+		).toThrow("name has the wrong destination");
+	});
+});
+
+describe("mode plans", () => {
+	it("blocks a one-way mode when the opposite direction is required", () => {
+		const cases = [
+			{ mode: "publish" as const, machine: 1, shared: 2, blocker: "requires APPLY" },
+			{ mode: "apply" as const, machine: 2, shared: 1, blocker: "requires PUBLISH" },
+		];
+		for (const selected of cases) {
+			const plan = createSyncPlan({
+				mode: selected.mode,
+				machine: inventory("machine", [selected.machine]),
+				shared: inventory("shared", [selected.shared]),
+				baseline: inventory("baseline", [1]),
+			});
+			expect(plan.blocked).toBe(true);
+			expect(plan.blockers[0]).toContain(selected.blocker);
+		}
 	});
 
 	it("reconciles independent changes in both directions", () => {

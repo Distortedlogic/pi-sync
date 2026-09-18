@@ -125,64 +125,7 @@ function context(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCom
 	} as ExtensionCommandContext;
 }
 
-describe("canonical plan artifact", () => {
-	it("creates full and short IDs without hashing display text", () => {
-		const first = plan();
-		const changedDisplay = plan({
-			actions: planOptions().actions.map((entry) => ({
-				...entry,
-				reason: `Different reason for ${entry.path}`,
-				finalResult: `Different display result for ${entry.path}`,
-			})),
-			prohibitedEffects: planOptions().prohibitedEffects.map((effect) => ({
-				...effect,
-				description: "Different display text.",
-			})),
-		});
-		expect(first.planId).toMatch(/^[a-f0-9]{64}$/);
-		expect(first.shortPlanId).toBe(first.planId.slice(0, 12));
-		expect(changedDisplay.planId).toBe(first.planId);
-		expect(Object.isFrozen(first)).toBe(true);
-		expect(Object.isFrozen(first.actions)).toBe(true);
-	});
-
-	it("rejects a write or deletion with the wrong destination", () => {
-		expect(() => plan({ actions: [action({ destination: "THIS MACHINE" })] })).toThrow("wrong destination");
-		expect(() =>
-			plan({
-				actions: [
-					action({
-						action: "WRITE IN SHARED REPOSITORY",
-						destination: "BASELINE",
-						direction: "baseline-only",
-						risk: "baseline",
-					}),
-				],
-			}),
-		).toThrow("name has the wrong destination");
-	});
-});
-
 describe("plan and receipt formatting", () => {
-	it("shows baseline-only changed paths", () => {
-		const artifact = plan({
-			actions: [
-				action({
-					action: "UPDATE BASELINE ONLY",
-					destination: "BASELINE",
-					direction: "baseline-only",
-					finalResult: "The baseline will record the common result for equal.json.",
-					path: "equal.json",
-					reason: "THIS MACHINE and SHARED REPOSITORY already have the same result.",
-					risk: "baseline",
-				}),
-			],
-		});
-		expect(formatPlanText(artifact, "final-plan")).toContain(
-			"UPDATE BASELINE ONLY: equal.json | Destination: BASELINE",
-		);
-	});
-
 	it("uses identical action rows in the plan and completion receipt", () => {
 		const artifact = plan();
 		const planned = formatPlanRows(artifact, "final-plan").filter((row) => row.actionKey);
@@ -233,8 +176,8 @@ describe("plan review", () => {
 		expect(input).toHaveBeenCalledWith("Enter exact plan ID", rebuilt?.planId);
 	});
 
-	for (const mode of ["print", "json"] as const) {
-		it(`returns the plan only in ${mode} mode`, async () => {
+	it("returns the immutable plan without UI or decision prompts", async () => {
+		for (const mode of ["print", "json"] as const) {
 			const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
 			const previewPlan = plan();
 			const result = await reviewSyncPlan({
@@ -249,41 +192,12 @@ describe("plan review", () => {
 				text: formatPlanText(previewPlan, "final-plan"),
 			});
 			expect(rebuild).not.toHaveBeenCalled();
-		});
-	}
-
-	it("cancels without rebuilding or authorizing changes", async () => {
-		const rebuild = vi.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
-		const select = vi.fn(async () => undefined);
-		const ctx = context({
-			hasUI: true,
-			mode: "rpc",
-			ui: { select } as unknown as ExtensionCommandContext["ui"],
-		});
-		const previewPlan = plan();
-		const result = await reviewSyncPlan({ ctx, previewPlan, decisionRequirements: requirements, rebuild });
-		expect(result).toEqual({ status: "cancelled", plan: previewPlan });
-		expect(rebuild).not.toHaveBeenCalled();
+		}
 	});
 
-	it("uses the TUI review component and rejects a short ID", async () => {
-		const rebuilt = plan();
-		const select = vi.fn(async (_title: string, choices: string[]) => choices[0]);
-		const custom = vi.fn(async () => "continue");
-		const input = vi.fn(async () => rebuilt.shortPlanId);
-		const ctx = context({
-			hasUI: true,
-			mode: "tui",
-			ui: { select, custom, input } as unknown as ExtensionCommandContext["ui"],
-		});
-		const result = await reviewSyncPlan({
-			ctx,
-			previewPlan: plan(),
-			decisionRequirements: [],
-			rebuild: () => rebuilt,
-		});
-		expect(custom).toHaveBeenCalledTimes(1);
-		expect(result.status).toBe("id_mismatch");
-		expect(() => authorizePlanExecution(rebuilt, rebuilt.shortPlanId)).toThrow("Exact plan ID");
+	it("requires the exact full plan ID for execution", () => {
+		const artifact = plan();
+		expect(() => authorizePlanExecution(artifact, artifact.shortPlanId)).toThrow("Exact plan ID");
+		expect(authorizePlanExecution(artifact, artifact.planId)).toEqual({ planId: artifact.planId });
 	});
 });

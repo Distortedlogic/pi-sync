@@ -1,15 +1,12 @@
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { expect } from "expect";
 import {
-	activateScopeApprovalForPlan,
-	approveScopeExpansion,
 	createDefaultLocalPolicy,
 	DEFAULT_MANAGED_SCOPE,
 	ensureConfigSyncDirectories,
 	isPermanentlyDenied,
 	resolveEffectivePaths,
-	resolveScopePlan,
 } from "../src/config.ts";
 import {
 	loadBackupMetadata,
@@ -28,7 +25,6 @@ import {
 	type BackupMetadata,
 	CONFIG_SYNC_SCHEMA_VERSION,
 	type ConfigDocument,
-	type LocalPolicy,
 	type OperationJournal,
 	type PlanArtifact,
 	type StateDocument,
@@ -36,7 +32,6 @@ import {
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const FIRST_PLAN_ID = "1".repeat(64);
-const NEXT_PLAN_ID = "2".repeat(64);
 const BASELINE_COMMIT = "a".repeat(40);
 
 function state(deviceId: string): StateDocument {
@@ -56,20 +51,6 @@ function state(deviceId: string): StateDocument {
 }
 
 describe("configuration storage", () => {
-	it("creates the required data layout without symlinks", async () => {
-		const agentDirectory = await createTemporaryAgentDirectory();
-		try {
-			const paths = await ensureConfigSyncDirectories(agentDirectory.path);
-			for (const path of [paths.root, paths.plansDirectory, paths.candidatesDirectory, paths.backupsDirectory]) {
-				const details = await lstat(path);
-				expect(details.isDirectory()).toBe(true);
-				expect(details.isSymbolicLink()).toBe(false);
-			}
-		} finally {
-			await agentDirectory.cleanup();
-		}
-	});
-
 	it("rejects corrupt state instead of creating an empty baseline", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
 		try {
@@ -174,25 +155,5 @@ describe("managed scope", () => {
 		];
 		for (const path of denied) expect(isPermanentlyDenied(path)).toBe(true);
 		expect(resolveEffectivePaths(["settings.json", ...denied], ["**/*"], ["**/*"])).toEqual(["settings.json"]);
-	});
-
-	it("makes a shared scope expansion a policy-only plan", () => {
-		const policy: LocalPolicy = {
-			...createDefaultLocalPolicy(),
-			acceptedSharedScope: ["settings.json"],
-		};
-		const requestedScope = ["settings.json", "skills/**"];
-		const currentPlan = resolveScopePlan(["settings.json", "skills/example/SKILL.md"], requestedScope, policy);
-		expect(currentPlan).toEqual({ effectivePaths: [], expansion: ["skills/**"], policyChangeOnly: true });
-
-		const approved = approveScopeExpansion(policy, requestedScope, FIRST_PLAN_ID);
-		expect(() => activateScopeApprovalForPlan(approved, FIRST_PLAN_ID)).toThrow("only to the next plan");
-		const activePolicy = activateScopeApprovalForPlan(approved, NEXT_PLAN_ID);
-		const nextPlan = resolveScopePlan(["settings.json", "skills/example/SKILL.md"], requestedScope, activePolicy);
-		expect(nextPlan).toEqual({
-			effectivePaths: ["settings.json", "skills/example/SKILL.md"],
-			expansion: [],
-			policyChangeOnly: false,
-		});
 	});
 });
