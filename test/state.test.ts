@@ -7,18 +7,8 @@ import {
 	isPermanentlyDenied,
 	resolveEffectivePaths,
 } from "../src/config.ts";
-import {
-	loadPlanArtifact,
-	loadState,
-	RecoveryRequiredError,
-	savePlanArtifact,
-	saveState,
-} from "../src/state.ts";
-import {
-	CONFIG_SYNC_SCHEMA_VERSION,
-	type PlanArtifact,
-	type StateDocument,
-} from "../src/types.ts";
+import { loadPlanArtifact, loadState, RecoveryRequiredError, savePlanArtifact, saveState } from "../src/state.ts";
+import { CONFIG_SYNC_SCHEMA_VERSION, type PlanArtifact, type StateDocument } from "../src/types.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const FIRST_PLAN_ID = "1".repeat(64);

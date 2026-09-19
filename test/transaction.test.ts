@@ -311,9 +311,7 @@ describe("machine apply", () => {
 				assert.equal(error.backupId, "backup-manual");
 			}
 			assert.ok(
-				(await readFile(getBackupMetadataPath(fixture.agentDirectory, "backup-manual"), "utf8")).includes(
-					"a.txt",
-				),
+				(await readFile(getBackupMetadataPath(fixture.agentDirectory, "backup-manual"), "utf8")).includes("a.txt"),
 			);
 		} finally {
 			await fixture.temporary.cleanup();

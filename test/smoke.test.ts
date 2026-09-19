@@ -36,7 +36,10 @@ describe("pi-sync foundation", () => {
 				hasUI: false,
 				ui: { notify: (message: string) => notifications.push(message) },
 			} as unknown as ExtensionCommandContext);
-			assert.equal(notifications.some((message) => message.includes("Configuration is missing")), true);
+			assert.equal(
+				notifications.some((message) => message.includes("Configuration is missing")),
+				true,
+			);
 			assert.equal(await loadJournal(agentDirectory.path), undefined);
 		} finally {
 			if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
