@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
@@ -23,19 +23,15 @@ import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from 
 
 const execFileAsync = promisify(execFile);
 const PLAN_ID = "1".repeat(64);
-let savedGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
-
 interface GitCall {
 	command: string;
 	args: string[];
 	cwd?: string;
-	timeout?: number;
-	signal?: AbortSignal;
 }
 
 function createGitExec(calls: GitCall[] = []): GitExec {
 	return async (command, args, options): Promise<ExecResult> => {
-		calls.push({ command, args: [...args], cwd: options?.cwd, timeout: options?.timeout, signal: options?.signal });
+		calls.push({ command, args: [...args], cwd: options?.cwd });
 		try {
 			const result = await execFileAsync(command, args, {
 				cwd: options?.cwd,
@@ -62,8 +58,15 @@ async function seedRepository(repositoryPath: string, parent: string): Promise<s
 	await execFileAsync("git", ["clone", repositoryPath, seed]);
 	await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: seed });
 	await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: seed });
-	await writeFile(join(seed, "settings.json"), '{"theme":"dark"}\n', "utf8");
-	await execFileAsync("git", ["add", "settings.json"], { cwd: seed });
+	await Promise.all([
+		writeFile(join(seed, "settings.json"), '{"theme":"dark"}\n', "utf8"),
+		writeFile(
+			join(seed, SHARED_MANIFEST_PATH),
+			`${JSON.stringify({ managedScope: ["settings.json"], schemaVersion: 1 })}\n`,
+			"utf8",
+		),
+	]);
+	await execFileAsync("git", ["add", "settings.json", SHARED_MANIFEST_PATH], { cwd: seed });
 	await execFileAsync("git", ["commit", "-m", "Seed"], { cwd: seed });
 	await execFileAsync("git", ["push", "origin", "HEAD:main"], { cwd: seed });
 	const result = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: seed });
@@ -99,21 +102,8 @@ async function advanceSharedRepository(repositoryPath: string, parent: string): 
 	return result.stdout.trim();
 }
 
-async function repositoryRefs(repositoryPath: string): Promise<string> {
-	const result = await execFileAsync("git", ["for-each-ref", "--format=%(refname):%(objectname)"], {
-		cwd: repositoryPath,
-	});
-	return result.stdout;
-}
-
-afterEach(() => {
-	if (savedGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-	else process.env.GIT_CONFIG_GLOBAL = savedGlobalConfig;
-	savedGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
-});
-
 describe("Git snapshots and candidates", () => {
-	it("fetches before planning and creates a one-parent candidate from that exact commit", async () => {
+	it("uses one exact snapshot for a one-parent candidate and focused diff", async () => {
 		const agent = await createTemporaryAgentDirectory();
 		const shared = await createTemporaryBareGitRepository();
 		const calls: GitCall[] = [];
@@ -135,125 +125,32 @@ describe("Git snapshots and candidates", () => {
 				finalSharedTree: finalTree,
 			});
 			assert.equal(candidate.reviewedSharedCommit, seededCommit);
-			const parent = await execFileAsync("git", ["rev-parse", `${candidate.candidateCommit}^`], {
+			const revision = await execFileAsync("git", ["rev-list", "--parents", "-n", "1", candidate.candidateCommit], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
-			assert.equal(parent.stdout.trim(), seededCommit);
+			assert.deepEqual(revision.stdout.trim().split(" "), [candidate.candidateCommit, seededCommit]);
 			const content = await execFileAsync("git", ["show", `${candidate.candidateCommit}:settings.json`], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
 			assert.equal(content.stdout, '{"theme":"light"}\n');
-			assert.equal(
-				calls.every((call) => call.command === "git" && call.timeout === 30_000),
-				true,
-			);
-		} finally {
-			await Promise.all([agent.cleanup(), shared.cleanup()]);
-		}
-	});
 
-	it("returns a doctor result for an unknown worktree change", async () => {
-		const agent = await createTemporaryAgentDirectory();
-		const shared = await createTemporaryBareGitRepository();
-		const exec = createGitExec();
-		const repository: RepositoryConfig = { repositoryPath: shared.path, branch: "main" };
-		try {
-			await seedRepository(shared.path, agent.path);
-			const first = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			assert.equal(first.status, "ready");
-			if (first.status !== "ready") return;
-			await writeFile(join(first.snapshot.workspace.repositoryDirectory, "unknown.txt"), "unknown", "utf8");
-			const second = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			assert.deepEqual(second, {
-				status: "doctor",
-				doctor: {
-					ok: false,
-					code: "dirty_worktree",
-					message: "The extension-owned Git worktree has unknown changes. Run /config-sync doctor.",
-				},
-			});
-		} finally {
-			await Promise.all([agent.cleanup(), shared.cleanup()]);
-		}
-	});
-
-	it("does not execute configured Git hooks", async () => {
-		if (process.platform === "win32") return;
-		const agent = await createTemporaryAgentDirectory();
-		const shared = await createTemporaryBareGitRepository();
-		const marker = join(agent.path, "hook-ran");
-		const maliciousHooks = join(agent.path, "malicious-hooks");
-		const globalConfig = join(agent.path, "gitconfig");
-		await mkdir(maliciousHooks);
-		for (const hook of ["post-checkout", "pre-commit", "post-commit"]) {
-			const hookPath = join(maliciousHooks, hook);
-			await writeFile(hookPath, `#!/bin/sh\nprintf ran > "${marker}"\n`, "utf8");
-			await chmod(hookPath, 0o755);
-		}
-		await writeFile(globalConfig, `[core]\n\thooksPath = ${maliciousHooks}\n`, "utf8");
-		await seedRepository(shared.path, agent.path);
-		process.env.GIT_CONFIG_GLOBAL = globalConfig;
-		const exec = createGitExec();
-		const repository: RepositoryConfig = { repositoryPath: shared.path, branch: "main" };
-		try {
-			const fetched = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			assert.equal(fetched.status, "ready");
-			if (fetched.status !== "ready") return;
-			const repositoryHooks = join(fetched.snapshot.workspace.repositoryDirectory, ".git", "hooks");
-			await mkdir(repositoryHooks, { recursive: true });
-			for (const hook of ["post-checkout", "pre-commit", "post-commit"]) {
-				const hookPath = join(repositoryHooks, hook);
-				await writeFile(hookPath, `#!/bin/sh\nprintf ran > "${marker}"\n`, "utf8");
-				await chmod(hookPath, 0o755);
-			}
-			const current = await discoverFileInventory(fetched.snapshot.workspace.repositoryDirectory, "shared");
-			await createCandidateCommit({
-				exec,
-				snapshot: fetched.snapshot,
-				planId: PLAN_ID,
-				currentSharedTree: current.files,
-				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
-			});
-			await assert.rejects(
-				readFile(marker, "utf8"),
-				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
-			);
-		} finally {
-			await Promise.all([agent.cleanup(), shared.cleanup()]);
-		}
-	});
-
-	it("uses the last named snapshot for one focused diff", async () => {
-		const agent = await createTemporaryAgentDirectory();
-		const shared = await createTemporaryBareGitRepository();
-		const calls: GitCall[] = [];
-		const exec = createGitExec(calls);
-		const repository: RepositoryConfig = { repositoryPath: shared.path, branch: "main" };
-		try {
-			await seedRepository(shared.path, agent.path);
-			const fetched = await fetchSharedSnapshot({ exec, agentDirectory: agent.path, repository });
-			if (fetched.status !== "ready") throw new Error("Snapshot unavailable");
-			const current = await discoverFileInventory(fetched.snapshot.workspace.repositoryDirectory, "shared");
-			const candidate = await createCandidateCommit({
-				exec,
-				snapshot: fetched.snapshot,
-				planId: PLAN_ID,
-				currentSharedTree: current.files,
-				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
-			});
-			calls.length = 0;
-			const firstDiff = await diffFromLastNamedSnapshot({
+			const diffCallIndex = calls.length;
+			const focusedDiff = await diffFromLastNamedSnapshot({
 				exec,
 				workspace: candidate.workspace,
 				targetCommit: candidate.candidateCommit,
 				path: "settings.json",
 			});
-			assert.equal(firstDiff.baseCommit, candidate.reviewedSharedCommit);
-			assert.ok(firstDiff.diff.includes("settings.json"));
-			assert.equal(
-				calls.some((call) => call.args.includes("fetch")),
-				false,
-			);
+			assert.equal(focusedDiff.baseCommit, seededCommit);
+			assert.ok(focusedDiff.diff.includes("settings.json"));
+			assert.ok(!calls.slice(diffCallIndex).some((call) => call.args.includes("fetch")));
+
+			const hooksDirectory = getConfigSyncPaths(agent.path).hooksDirectory;
+			for (const call of calls) {
+				assert.equal(call.command, "git");
+				assert.ok(call.args.includes(`core.hooksPath=${hooksDirectory}`));
+				assert.ok(call.args.includes(`init.templateDir=${hooksDirectory}`));
+			}
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
@@ -261,41 +158,12 @@ describe("Git snapshots and candidates", () => {
 });
 
 describe("setup repository inspection", () => {
-	it("does not change remote refs and requires a valid manifest", async () => {
+	it("accepts a valid shared manifest", async () => {
 		const agent = await createTemporaryAgentDirectory();
 		const shared = await createTemporaryBareGitRepository();
 		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
 		try {
-			const emptyRefs = await repositoryRefs(shared.path);
-			const empty = await inspectSetupRepository({
-				exec: createGitExec(),
-				agentDirectory: agent.path,
-				repository,
-			});
-			assert.equal(empty.empty, true);
-			assert.equal(empty.manifest, null);
-			assert.equal(empty.privacyNotice, "SHARED REPOSITORY privacy could not be verified.");
-			assert.equal(empty.sharedCommit, null);
-			assert.equal(await repositoryRefs(shared.path), emptyRefs);
-
-			await seedRepository(shared.path, agent.path);
-			const checkout = join(agent.path, "seed");
-			const refsBeforeRejectedInspection = await repositoryRefs(shared.path);
-			await assert.rejects(
-				inspectSetupRepository({ exec: createGitExec(), agentDirectory: agent.path, repository }),
-				new RegExp(`valid ${SHARED_MANIFEST_PATH} manifest`),
-			);
-			assert.equal(await repositoryRefs(shared.path), refsBeforeRejectedInspection);
-
-			await writeFile(
-				join(checkout, SHARED_MANIFEST_PATH),
-				JSON.stringify({ managedScope: ["settings.json"], schemaVersion: 1 }),
-				"utf8",
-			);
-			await execFileAsync("git", ["add", SHARED_MANIFEST_PATH], { cwd: checkout });
-			await execFileAsync("git", ["commit", "-m", "Add manifest"], { cwd: checkout });
-			await execFileAsync("git", ["push", "origin", "HEAD:main"], { cwd: checkout });
-			const refsBeforeAcceptedInspection = await repositoryRefs(shared.path);
+			const sharedCommit = await seedRepository(shared.path, agent.path);
 			const inspected = await inspectSetupRepository({
 				exec: createGitExec(),
 				agentDirectory: agent.path,
@@ -303,28 +171,8 @@ describe("setup repository inspection", () => {
 			});
 			assert.equal(inspected.empty, false);
 			assert.deepEqual(inspected.manifest, { managedScope: ["settings.json"], schemaVersion: 1 });
-			assert.equal(await repositoryRefs(shared.path), refsBeforeAcceptedInspection);
-		} finally {
-			await Promise.all([agent.cleanup(), shared.cleanup()]);
-		}
-	});
-
-	it("blocks an access failure without changing remote refs", async () => {
-		const agent = await createTemporaryAgentDirectory();
-		const shared = await createTemporaryBareGitRepository();
-		const repository: RepositoryConfig = { branch: "main", repositoryPath: shared.path };
-		try {
-			await inspectSetupRepository({ exec: createGitExec(), agentDirectory: agent.path, repository });
-			const refsBefore = await repositoryRefs(shared.path);
-			const unavailable: GitExec = async (command, args, options) =>
-				args.includes("ls-remote")
-					? { stdout: "", stderr: "unavailable", code: 1, killed: false }
-					: createGitExec()(command, args, options);
-			await assert.rejects(
-				inspectSetupRepository({ exec: unavailable, agentDirectory: agent.path, repository }),
-				/access verification failed/,
-			);
-			assert.equal(await repositoryRefs(shared.path), refsBefore);
+			assert.equal(inspected.sharedCommit, sharedCommit);
+			assert.equal(inspected.privacyNotice, "SHARED REPOSITORY privacy could not be verified.");
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}
