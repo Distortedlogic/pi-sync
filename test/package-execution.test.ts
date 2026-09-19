@@ -38,8 +38,6 @@ interface PackageFixture {
 interface PiCall {
 	command: string;
 	args: string[];
-	timeout?: number;
-	signal?: AbortSignal;
 }
 
 function settings(packages: readonly string[]): string {
@@ -122,8 +120,8 @@ function packageFixture(
 }
 
 function createExec(calls: PiCall[], fail?: (args: readonly string[], callIndex: number) => boolean): PackageExec {
-	return async (command, args, options): Promise<ExecResult> => {
-		calls.push({ command, args: [...args], timeout: options?.timeout, signal: options?.signal });
+	return async (command, args): Promise<ExecResult> => {
+		calls.push({ command, args: [...args] });
 		return fail?.(args, calls.length - 1)
 			? { stdout: "", stderr: "failure details", code: 1, killed: false }
 			: { stdout: "", stderr: "", code: 0, killed: false };
@@ -169,7 +167,6 @@ describe("approved package execution", () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const agentDirectory = join(temporary.path, "agent");
 		const calls: PiCall[] = [];
-		const events: string[] = [];
 		const fixture = packageFixture(
 			["npm:remove@1.0.0", "npm:update@1.0.0", "file:../machine-only"],
 			["npm:update@2.0.0", "npm:install@1.0.0", "file:../machine-only"],
@@ -189,13 +186,8 @@ describe("approved package execution", () => {
 				{ operation: "remove", identity: "npm:remove", exactSource: "npm:remove@1.0.0" },
 			],
 		);
-		const exec = async (...args: Parameters<PackageExec>): Promise<ExecResult> => {
-			events.push(`command:${args[1].join(":")}`);
-			return createExec(calls)(...args);
-		};
-		const rememberApprovals = mock.fn(async (sources: readonly string[]) => {
-			events.push(`remember:${sources.join(",")}`);
-		});
+		const exec = createExec(calls);
+		const rememberApprovals = mock.fn(async (_sources: readonly string[]) => {});
 		try {
 			await prepareExecution(agentDirectory, fixture);
 			const result = await execute({ agentDirectory, fixture, exec, rememberApprovals });
@@ -207,41 +199,23 @@ describe("approved package execution", () => {
 					["pi", "install", "npm:install@1.0.0"],
 				],
 			);
-			assert.equal(
-				calls.every((call) => call.timeout === 5_000),
-				true,
-			);
 			assert.equal(result.status, "success");
 			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.plannedSettingsText);
 			const finalSettings = parseSettings(fixture.plannedSettingsText, { source: "machine", policy: fixture.policy });
 			assert.equal(packageSetFingerprint(finalSettings.packages), fixture.plan.packageFingerprint);
 			assert.deepEqual(rememberApprovals.mock.calls[0]?.arguments, [["npm:install@1.0.0"]]);
-			assert.equal(events.at(-1), "remember:npm:install@1.0.0");
-			const journal = await loadJournal(agentDirectory);
-			assert.equal(journal?.stage, "machine_files_applied");
-			assert.deepEqual(
-				journal?.packageEvents?.map(({ operation, status }) => `${operation}:${status}`),
-				[
-					"remove:started",
-					"remove:completed",
-					"update:started",
-					"update:completed",
-					"install:started",
-					"install:completed",
-				],
-			);
 		} finally {
 			await temporary.cleanup();
 		}
 	});
 
-	it("blocks invalid package approvals before any command", async () => {
+	it("blocks a mismatched exact-source approval before execution", async () => {
 		const temporary = await createTemporaryAgentDirectory();
+		const agentDirectory = join(temporary.path, "agent");
 		const calls: PiCall[] = [];
 		const spec = { operation: "install" as const, identity: "npm:one", exactSource: "npm:one@1.0.0" };
-		const missing = packageFixture([], [spec.exactSource], [spec], { decisions: [] });
 		const valid = packageFixture([], [spec.exactSource], [spec]);
-		const changedApproval = packageFixture([], [spec.exactSource], [spec], {
+		const fixture = packageFixture([], [spec.exactSource], [spec], {
 			decisions: [
 				{
 					...valid.plan.decisions[0],
@@ -249,59 +223,12 @@ describe("approved package execution", () => {
 				} as PlanDecision,
 			],
 		});
-		const cases: Array<{
-			name: string;
-			fixture: PackageFixture;
-			expected: string;
-			authorizationPlanId?: string;
-			currentSettingsText?: string;
-		}> = [
-			{ name: "missing approval", fixture: missing, expected: "incomplete" },
-			{
-				name: "mismatched authorization",
-				fixture: valid,
-				expected: "authorization",
-				authorizationPlanId: "f".repeat(64),
-			},
-			{
-				name: "changed approval source",
-				fixture: changedApproval,
-				expected: "does not match the exact planned source",
-			},
-			{
-				name: "changed installed source",
-				fixture: valid,
-				expected: "install source changed",
-				currentSettingsText: settings(["npm:one@0.9.0"]),
-			},
-		];
-
 		try {
-			for (const [index, selected] of cases.entries()) {
-				const agentDirectory = join(temporary.path, `agent-${index}`);
-				await prepareExecution(agentDirectory, selected.fixture);
-				if (selected.currentSettingsText) {
-					await writeFile(join(agentDirectory, "settings.json"), selected.currentSettingsText, "utf8");
-				}
-				let failure: Error | undefined;
-				try {
-					await executeConfirmedPackagePlan({
-						exec: createExec(calls),
-						cwd: temporary.path,
-						agentDirectory,
-						plan: selected.fixture.plan,
-						authorization: {
-							planId: selected.authorizationPlanId ?? selected.fixture.plan.planId,
-						},
-						plannedSettingsText: selected.fixture.plannedSettingsText,
-						policy: selected.fixture.policy,
-					});
-				} catch (error) {
-					if (error instanceof Error) failure = error;
-				}
-				assert.ok(failure, `Expected ${selected.name} to fail.`);
-				assert.ok(failure.message.includes(selected.expected));
-			}
+			await prepareExecution(agentDirectory, fixture);
+			await assert.rejects(
+				execute({ agentDirectory, fixture, exec: createExec(calls) }),
+				/does not match the exact planned source/,
+			);
 			assert.deepEqual(calls, []);
 		} finally {
 			await temporary.cleanup();

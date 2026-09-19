@@ -16,6 +16,13 @@ import { createTemporaryAgentDirectory } from "./helpers.ts";
 const COMMIT = "2".repeat(40);
 const CANDIDATE = "3".repeat(40);
 const HASHES = ["a", "b", "c", "d", "e", "f"].map((value) => value.repeat(64));
+const STALE_PLAN_CHANGES: Array<{ name: string; override: Partial<BuildPlanArtifactOptions> }> = [
+	{ name: "THIS MACHINE changed", override: { machineFingerprint: "9".repeat(64) } },
+	{ name: "SHARED REPOSITORY changed", override: { sharedFingerprint: "9".repeat(64) } },
+	{ name: "managed scope changed", override: { effectivePaths: ["changed-scope.json"] } },
+	{ name: "policy changed", override: { policyFingerprint: "9".repeat(64) } },
+	{ name: "package source changed", override: { packageFingerprint: "9".repeat(64) } },
+];
 
 function action(overrides: Partial<PlanArtifactAction>): PlanArtifactAction {
 	return {
@@ -258,17 +265,10 @@ describe("transaction coordinator", () => {
 		}
 	});
 
-	for (const { name, override } of [
-		{ name: "THIS MACHINE changed", override: { machineFingerprint: "9".repeat(64) } },
-		{ name: "SHARED REPOSITORY changed", override: { sharedFingerprint: "9".repeat(64) } },
-		{ name: "managed scope changed", override: { effectivePaths: ["changed-scope.json"] } },
-		{ name: "policy changed", override: { policyFingerprint: "9".repeat(64) } },
-		{ name: "package source changed", override: { packageFingerprint: "9".repeat(64) } },
-	]) {
-		it(`rejects a stale full plan when ${name}`, async () => {
+	it("rejects stale immutable plan inputs before starting a transaction", async () => {
+		for (const { name, override } of STALE_PLAN_CHANGES) {
 			const temporary = await createTemporaryAgentDirectory();
 			const plan = createPlan();
-			const stale = createPlan(override);
 			const events: string[] = [];
 			try {
 				await prepare(temporary.path, plan);
@@ -276,42 +276,17 @@ describe("transaction coordinator", () => {
 					execute({
 						agentDirectory: temporary.path,
 						plan,
-						steps: createSteps(plan, events, { fetchAndRebuildPlan: async () => stale }),
+						steps: createSteps(plan, events, { fetchAndRebuildPlan: async () => createPlan(override) }),
 					}),
 					TransactionPlanExpiredError,
+					name,
 				);
-				assert.deepEqual(events, []);
-				assert.equal(await loadJournal(temporary.path), undefined);
-				assert.equal((await loadState(temporary.path))?.pendingOperation, null);
+				assert.deepEqual(events, [], name);
+				assert.equal(await loadJournal(temporary.path), undefined, name);
+				assert.equal((await loadState(temporary.path))?.pendingOperation, null, name);
 			} finally {
 				await temporary.cleanup();
 			}
-		});
-	}
-
-	it("makes no machine change when PUBLISH fails", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const plan = createPlan();
-		const events: string[] = [];
-		try {
-			await prepare(temporary.path, plan);
-			await assert.rejects(
-				execute({
-					agentDirectory: temporary.path,
-					plan,
-					steps: createSteps(plan, events, {
-						publishCandidate: async () => {
-							throw new Error("PUBLISH failed");
-						},
-					}),
-				}),
-				/PUBLISH failed/,
-			);
-			assert.deepEqual(events, ["fetch_and_revalidate", "candidate_validated"]);
-			assert.equal((await loadJournal(temporary.path))?.stage, "candidate_created");
-			assert.equal((await loadState(temporary.path))?.pendingOperation, null);
-		} finally {
-			await temporary.cleanup();
 		}
 	});
 

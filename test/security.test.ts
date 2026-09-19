@@ -153,8 +153,8 @@ describe("secret scanner failure handling", () => {
 		},
 	];
 
-	for (const { name, factory, phase, timeoutMs = 50 } of failures) {
-		it(`blocks a ${name} failure`, async () => {
+	it("blocks scanner startup, read, timeout, and malformed-output failures", async () => {
+		for (const { name, factory, phase, timeoutMs = 50 } of failures) {
 			const temporary = await createTemporaryAgentDirectory();
 			try {
 				await writeFile(join(temporary.path, "notes.txt"), "safe\n", "utf8");
@@ -162,18 +162,16 @@ describe("secret scanner failure handling", () => {
 					scannerFactory: factory,
 					scannerTimeoutMs: timeoutMs,
 				});
-				try {
-					await validateStagedCandidate(input);
-					assert.fail("Expected scanner failure");
-				} catch (error) {
-					assert.ok(error instanceof SecretScannerFailure);
-					assert.equal(error.phase, phase);
-				}
+				await assert.rejects(
+					validateStagedCandidate(input),
+					(error: unknown) => error instanceof SecretScannerFailure && error.phase === phase,
+					name,
+				);
 			} finally {
 				await temporary.cleanup();
 			}
-		});
-	}
+		}
+	});
 
 	it("blocks and redacts secret findings", async () => {
 		const temporary = await createTemporaryAgentDirectory();

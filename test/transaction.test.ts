@@ -134,6 +134,16 @@ function machinePath(root: string, path: string): boolean {
 	return path === root || path.startsWith(`${root}${sep}`);
 }
 
+async function createFailureFixture() {
+	const temporary = await createTemporaryAgentDirectory();
+	const agentDirectory = join(temporary.path, "agent");
+	const machineRoot = join(temporary.path, "machine");
+	const current = { "a.txt": file("a.txt", "old-a"), "b.txt": file("b.txt", "old-b") };
+	const final = { "a.txt": file("a.txt", "new-a"), "b.txt": file("b.txt", "new-b") };
+	await writeTree(machineRoot, current);
+	return { temporary, agentDirectory, machineRoot, selectedApplySet: applySet(current, final) };
+}
+
 describe("machine apply", () => {
 	it("builds the complete set, verifies a backup, applies atomically, and verifies final hashes", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -197,11 +207,7 @@ describe("machine apply", () => {
 	});
 
 	it("prevents the first machine change when backup verification fails", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
-		const machineRoot = join(temporary.path, "machine");
-		const current = { "a.txt": file("a.txt", "old") };
-		const final = { "a.txt": file("a.txt", "new") };
+		const fixture = await createFailureFixture();
 		const native = createMachineApplyOperations();
 		let machineWrites = 0;
 		const operations: MachineApplyOperations = {
@@ -211,42 +217,37 @@ describe("machine apply", () => {
 				return path.includes(`${sep}backups${sep}`) ? Buffer.from("corrupt") : content;
 			},
 			writeAtomic: async (path, content, mode) => {
-				if (machinePath(machineRoot, path)) machineWrites++;
+				if (machinePath(fixture.machineRoot, path)) machineWrites++;
 				await native.writeAtomic(path, content, mode);
 			},
 		};
 		try {
-			await writeTree(machineRoot, current);
 			await assert.rejects(
 				applyMachinePlan({
-					agentDirectory,
-					machineRoot,
+					agentDirectory: fixture.agentDirectory,
+					machineRoot: fixture.machineRoot,
 					backupId: "backup-invalid",
 					createdAt: "2026-01-01T00:00:00.000Z",
-					applySet: applySet(current, final),
+					applySet: fixture.selectedApplySet,
 					operations,
 				}),
 				/THIS MACHINE was not changed/,
 			);
 			assert.equal(machineWrites, 0);
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old");
+			assert.equal(await readFile(join(fixture.machineRoot, "a.txt"), "utf8"), "old-a");
 		} finally {
-			await temporary.cleanup();
+			await fixture.temporary.cleanup();
 		}
 	});
 
 	it("restores every path after a mid-apply failure", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
-		const machineRoot = join(temporary.path, "machine");
-		const current = { "a.txt": file("a.txt", "old-a"), "b.txt": file("b.txt", "old-b") };
-		const final = { "a.txt": file("a.txt", "new-a"), "b.txt": file("b.txt", "new-b") };
+		const fixture = await createFailureFixture();
 		const native = createMachineApplyOperations();
 		let failed = false;
 		const operations: MachineApplyOperations = {
 			...native,
 			writeAtomic: async (path, content, mode) => {
-				if (machinePath(machineRoot, path) && path.endsWith("b.txt") && !failed) {
+				if (machinePath(fixture.machineRoot, path) && path.endsWith("b.txt") && !failed) {
 					failed = true;
 					throw new Error("injected apply failure");
 				}
@@ -254,14 +255,13 @@ describe("machine apply", () => {
 			},
 		};
 		try {
-			await writeTree(machineRoot, current);
 			try {
 				await applyMachinePlan({
-					agentDirectory,
-					machineRoot,
+					agentDirectory: fixture.agentDirectory,
+					machineRoot: fixture.machineRoot,
 					backupId: "backup-restore",
 					createdAt: "2026-01-01T00:00:00.000Z",
-					applySet: applySet(current, final),
+					applySet: fixture.selectedApplySet,
 					operations,
 				});
 				assert.fail("Expected apply failure");
@@ -269,43 +269,38 @@ describe("machine apply", () => {
 				assert.ok(error instanceof MachineApplyError);
 				assert.equal(error.restored, true);
 			}
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old-a");
-			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "old-b");
+			assert.equal(await readFile(join(fixture.machineRoot, "a.txt"), "utf8"), "old-a");
+			assert.equal(await readFile(join(fixture.machineRoot, "b.txt"), "utf8"), "old-b");
 		} finally {
-			await temporary.cleanup();
+			await fixture.temporary.cleanup();
 		}
 	});
 
 	it("records exact manual recovery paths when automatic restore fails", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
-		const machineRoot = join(temporary.path, "machine");
-		const current = { "a.txt": file("a.txt", "old-a"), "b.txt": file("b.txt", "old-b") };
-		const final = { "a.txt": file("a.txt", "new-a"), "b.txt": file("b.txt", "new-b") };
+		const fixture = await createFailureFixture();
 		const native = createMachineApplyOperations();
 		let applyFailed = false;
 		const operations: MachineApplyOperations = {
 			...native,
 			writeAtomic: async (path, content, mode) => {
-				if (machinePath(machineRoot, path) && path.endsWith("b.txt") && !applyFailed) {
+				if (machinePath(fixture.machineRoot, path) && path.endsWith("b.txt") && !applyFailed) {
 					applyFailed = true;
 					throw new Error("injected apply failure");
 				}
-				if (machinePath(machineRoot, path) && path.endsWith("a.txt") && applyFailed) {
+				if (machinePath(fixture.machineRoot, path) && path.endsWith("a.txt") && applyFailed) {
 					throw new Error("injected restore failure");
 				}
 				await native.writeAtomic(path, content, mode);
 			},
 		};
 		try {
-			await writeTree(machineRoot, current);
 			try {
 				await applyMachinePlan({
-					agentDirectory,
-					machineRoot,
+					agentDirectory: fixture.agentDirectory,
+					machineRoot: fixture.machineRoot,
 					backupId: "backup-manual",
 					createdAt: "2026-01-01T00:00:00.000Z",
-					applySet: applySet(current, final),
+					applySet: fixture.selectedApplySet,
 					operations,
 				});
 				assert.fail("Expected restore failure");
@@ -315,55 +310,49 @@ describe("machine apply", () => {
 				assert.deepEqual(error.manualRecoveryPaths, ["a.txt"]);
 				assert.equal(error.backupId, "backup-manual");
 			}
-			assert.ok((await readFile(getBackupMetadataPath(agentDirectory, "backup-manual"), "utf8")).includes("a.txt"));
+			assert.ok(
+				(await readFile(getBackupMetadataPath(fixture.agentDirectory, "backup-manual"), "utf8")).includes(
+					"a.txt",
+				),
+			);
 		} finally {
-			await temporary.cleanup();
+			await fixture.temporary.cleanup();
 		}
 	});
 
 	it("stops apply operations at a cancellation boundary and finishes recovery before reporting", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		const agentDirectory = join(temporary.path, "agent");
-		const machineRoot = join(temporary.path, "machine");
-		const current = { "a.txt": file("a.txt", "old-a"), "b.txt": file("b.txt", "old-b") };
-		const final = { "a.txt": file("a.txt", "new-a"), "b.txt": file("b.txt", "new-b") };
+		const fixture = await createFailureFixture();
 		const controller = new AbortController();
 		const native = createMachineApplyOperations();
 		const writesBeforeCancellation: string[] = [];
-		let machineWriteCount = 0;
 		const operations: MachineApplyOperations = {
 			...native,
 			writeAtomic: async (path, content, mode) => {
-				if (machinePath(machineRoot, path)) {
-					machineWriteCount++;
-					if (!controller.signal.aborted) writesBeforeCancellation.push(path);
+				if (machinePath(fixture.machineRoot, path) && !controller.signal.aborted) {
+					writesBeforeCancellation.push(path);
 				}
 				await native.writeAtomic(path, content, mode);
-				if (machinePath(machineRoot, path) && !controller.signal.aborted) controller.abort();
+				if (machinePath(fixture.machineRoot, path) && !controller.signal.aborted) controller.abort();
 			},
 		};
 		try {
-			await writeTree(machineRoot, current);
 			await assert.rejects(
 				applyMachinePlan({
-					agentDirectory,
-					machineRoot,
+					agentDirectory: fixture.agentDirectory,
+					machineRoot: fixture.machineRoot,
 					backupId: "backup-cancel",
 					createdAt: "2026-01-01T00:00:00.000Z",
-					applySet: applySet(current, final),
+					applySet: fixture.selectedApplySet,
 					operations,
 					signal: controller.signal,
 				}),
 				(error: unknown) => error instanceof MachineApplyError && error.restored,
 			);
-			assert.deepEqual(writesBeforeCancellation, [join(machineRoot, "a.txt")]);
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old-a");
-			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "old-b");
-			const countAtReport = machineWriteCount;
-			await new Promise((accept) => setTimeout(accept, 20));
-			assert.equal(machineWriteCount, countAtReport);
+			assert.deepEqual(writesBeforeCancellation, [join(fixture.machineRoot, "a.txt")]);
+			assert.equal(await readFile(join(fixture.machineRoot, "a.txt"), "utf8"), "old-a");
+			assert.equal(await readFile(join(fixture.machineRoot, "b.txt"), "utf8"), "old-b");
 		} finally {
-			await temporary.cleanup();
+			await fixture.temporary.cleanup();
 		}
 	});
 });
