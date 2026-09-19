@@ -13,32 +13,35 @@ async function createRoots(parent: string): Promise<{ machine: string; shared: s
 }
 
 describe("managed path safety", () => {
-	it("rejects path traversal", async () => {
+	it("rejects traversal, collisions, symlinks, and nested repositories", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {
 			assert.throws(() => resolveManagedPath(temporary.path, "../outside"), /cannot contain '\.\.'/);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
+			for (const paths of [
+				["skills/Rule.md", "skills/rule.md"],
+				["skills/é.md", "skills/é.md"],
+			]) {
+				assert.throws(() => assertNoPathCollisions(paths), /path collision/);
+			}
 
-	it("detects case and Unicode collisions before file reads", () => {
-		assert.throws(() => assertNoPathCollisions(["skills/Rule.md", "skills/rule.md"]), /path collision/);
-		assert.throws(() => assertNoPathCollisions(["skills/é.md", "skills/é.md"]), /path collision/);
-	});
-
-	it("rejects root and managed-file symlinks", async () => {
-		if (process.platform === "win32") return;
-		const temporary = await createTemporaryAgentDirectory();
-		try {
 			const roots = await createRoots(temporary.path);
-			const linkedRoot = join(temporary.path, "linked-machine");
-			await symlink(roots.machine, linkedRoot, "dir");
-			await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /path component is a symlink/);
+			await mkdir(join(roots.machine, "extensions", "nested", ".git"), { recursive: true });
+			await assert.rejects(
+				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["extensions/**"] }),
+				/Nested Git repository/,
+			);
 
-			await writeFile(join(roots.shared, "target.json"), "{}", "utf8");
-			await symlink(join(roots.shared, "target.json"), join(roots.machine, "settings.json"));
-			await assert.rejects(discoverFileInventory(roots.machine, "machine"), /Managed path is a symlink/);
+			if (process.platform !== "win32") {
+				const linkedRoot = join(temporary.path, "linked-machine");
+				await symlink(roots.machine, linkedRoot, "dir");
+				await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /path component is a symlink/);
+
+				const symlinkMachine = join(temporary.path, "symlink-machine");
+				await mkdir(symlinkMachine);
+				await writeFile(join(roots.shared, "target.json"), "{}", "utf8");
+				await symlink(join(roots.shared, "target.json"), join(symlinkMachine, "settings.json"));
+				await assert.rejects(discoverFileInventory(symlinkMachine, "machine"), /Managed path is a symlink/);
+			}
 		} finally {
 			await temporary.cleanup();
 		}
@@ -46,7 +49,7 @@ describe("managed path safety", () => {
 });
 
 describe("file inventory", () => {
-	it("hashes exact bytes and canonicalizes settings.json only for comparison", async () => {
+	it("preserves exact bytes, compares canonical settings, and enforces size limits", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {
 			const roots = await createRoots(temporary.path);
@@ -68,57 +71,28 @@ describe("file inventory", () => {
 			assert.equal(machine?.comparisonSha256, shared?.comparisonSha256);
 			assert.deepEqual(Buffer.from(machine?.exactBytesBase64 ?? "", "base64"), machineBytes);
 			assert.deepEqual(Buffer.from(shared?.exactBytesBase64 ?? "", "base64"), sharedBytes);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
 
-	it("rejects nested repositories", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			const roots = await createRoots(temporary.path);
-			await mkdir(join(roots.machine, "extensions", "nested", ".git"), { recursive: true });
-			await assert.rejects(
-				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["extensions/**"] }),
-				/Nested Git repository/,
-			);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
-	it("reports the path for size failures without changing the file", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			const roots = await createRoots(temporary.path);
-			const path = join(roots.machine, "settings.json");
-			await writeFile(path, '{"large":true}', "utf8");
-			await assert.rejects(
-				discoverFileInventory(roots.machine, "machine", { limits: { maxFileBytes: 4 } }),
-				/settings\.json/,
-			);
-		} finally {
-			await temporary.cleanup();
-		}
-	});
-
-	it("applies the total plan limit across THIS MACHINE and SHARED REPOSITORY", async () => {
-		const temporary = await createTemporaryAgentDirectory();
-		try {
-			const roots = await createRoots(temporary.path);
-			await Promise.all([
-				writeFile(join(roots.machine, "settings.json"), "{}", "utf8"),
-				writeFile(join(roots.shared, "settings.json"), "{}", "utf8"),
-			]);
-			await assert.rejects(
-				buildInventorySet({
-					machineRoot: roots.machine,
-					sharedRoot: roots.shared,
-					baseline: null,
-					limits: { maxFileBytes: 10, maxTotalBytes: 3 },
-				}),
-				/SHARED REPOSITORY causes managed files/,
-			);
+			const combinedLimit = Math.max(machineBytes.length, sharedBytes.length);
+			const limitCases: Array<{ run: () => Promise<unknown>; pattern: RegExp }> = [
+				{
+					run: () =>
+						discoverFileInventory(roots.machine, "machine", {
+							limits: { maxFileBytes: 4 },
+						}),
+					pattern: /settings\.json/,
+				},
+				{
+					run: () =>
+						buildInventorySet({
+							machineRoot: roots.machine,
+							sharedRoot: roots.shared,
+							baseline: null,
+							limits: { maxFileBytes: 1024, maxTotalBytes: combinedLimit },
+						}),
+					pattern: /SHARED REPOSITORY causes managed files/,
+				},
+			];
+			for (const { run, pattern } of limitCases) await assert.rejects(run(), pattern);
 		} finally {
 			await temporary.cleanup();
 		}

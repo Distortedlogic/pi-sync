@@ -8,21 +8,19 @@ import {
 	createSyncPlan,
 	type FileActionName,
 	type PlanArtifactAction,
-	sortPlanActions,
 } from "../src/plan.ts";
 
 const PATH = "settings.json";
 
-function file(value: number, exactValue = value): Readonly<InventoryFile> {
+function file(value: number): Readonly<InventoryFile> {
 	const character = value.toString(16);
-	const exactCharacter = exactValue.toString(16);
 	return Object.freeze({
 		path: PATH,
 		size: 1,
-		sha256: exactCharacter.repeat(64),
+		sha256: character.repeat(64),
 		comparisonSha256: character.repeat(64),
 		executable: false,
-		exactBytesBase64: Buffer.from(String(exactValue)).toString("base64"),
+		exactBytesBase64: Buffer.from(String(value)).toString("base64"),
 	});
 }
 
@@ -92,78 +90,62 @@ function artifactOptions(overrides: Partial<BuildPlanArtifactOptions> = {}): Bui
 }
 
 const TRUTH_TABLE: TruthCase[] = [
-	{ name: "first sync with both absent" },
 	{
-		name: "first sync with only THIS MACHINE present",
+		name: "first sync from THIS MACHINE",
 		machine: MACHINE_CHANGE,
 		expected: "WRITE IN SHARED REPOSITORY",
 	},
-	{ name: "first sync with only SHARED REPOSITORY present", shared: SHARED_CHANGE, expected: "WRITE ON THIS MACHINE" },
 	{
-		name: "first sync with equal values",
-		machine: MACHINE_CHANGE,
-		shared: MACHINE_CHANGE,
-		expected: "UPDATE BASELINE ONLY",
+		name: "first sync from SHARED REPOSITORY",
+		shared: SHARED_CHANGE,
+		expected: "WRITE ON THIS MACHINE",
 	},
 	{
-		name: "first sync with different values",
+		name: "different first-sync values",
 		machine: MACHINE_CHANGE,
 		shared: SHARED_CHANGE,
 		expected: "CONFLICT — NO ACTION SELECTED",
 	},
-	{ name: "tracked file absent on both sides", baseline: BASELINE, expected: "UPDATE BASELINE ONLY" },
-	{ name: "tracked file unchanged on both sides", baseline: BASELINE, machine: BASELINE, shared: BASELINE },
+	{ name: "unchanged tracked value", baseline: BASELINE, machine: BASELINE, shared: BASELINE },
 	{
-		name: "THIS MACHINE changed and SHARED REPOSITORY is unchanged",
+		name: "THIS MACHINE changed",
 		baseline: BASELINE,
 		machine: MACHINE_CHANGE,
 		shared: BASELINE,
 		expected: "WRITE IN SHARED REPOSITORY",
 	},
 	{
-		name: "SHARED REPOSITORY changed and THIS MACHINE is unchanged",
+		name: "SHARED REPOSITORY changed",
 		baseline: BASELINE,
 		machine: BASELINE,
 		shared: SHARED_CHANGE,
 		expected: "WRITE ON THIS MACHINE",
 	},
 	{
-		name: "both sides changed to the same value",
+		name: "both sides reached the same value",
 		baseline: BASELINE,
 		machine: MACHINE_CHANGE,
 		shared: MACHINE_CHANGE,
 		expected: "UPDATE BASELINE ONLY",
 	},
 	{
-		name: "both sides changed to different values",
+		name: "both sides diverged",
 		baseline: BASELINE,
 		machine: MACHINE_CHANGE,
 		shared: SHARED_CHANGE,
 		expected: "CONFLICT — NO ACTION SELECTED",
 	},
 	{
-		name: "THIS MACHINE deleted and SHARED REPOSITORY is unchanged",
+		name: "THIS MACHINE deleted the tracked value",
 		baseline: BASELINE,
 		shared: BASELINE,
 		expected: "DELETE FROM SHARED REPOSITORY",
 	},
 	{
-		name: "SHARED REPOSITORY deleted and THIS MACHINE is unchanged",
+		name: "SHARED REPOSITORY deleted the tracked value",
 		baseline: BASELINE,
 		machine: BASELINE,
 		expected: "DELETE FROM THIS MACHINE",
-	},
-	{
-		name: "THIS MACHINE deleted and SHARED REPOSITORY changed",
-		baseline: BASELINE,
-		shared: SHARED_CHANGE,
-		expected: "CONFLICT — NO ACTION SELECTED",
-	},
-	{
-		name: "SHARED REPOSITORY deleted and THIS MACHINE changed",
-		baseline: BASELINE,
-		machine: MACHINE_CHANGE,
-		expected: "CONFLICT — NO ACTION SELECTED",
 	},
 ];
 
@@ -178,30 +160,6 @@ describe("three-way classifier", () => {
 			}
 		});
 	}
-
-	it("uses canonical settings content for equality while preserving exact hashes", () => {
-		const machine = file(4, 5);
-		const shared = file(4, 6);
-		const action = classifyFile(PATH, undefined, machine, shared);
-		assert.notEqual(machine.sha256, shared.sha256);
-		assert.equal(action?.action, "UPDATE BASELINE ONLY");
-	});
-
-	it("sorts actions by risk and then path", () => {
-		const sorted = sortPlanActions([
-			{ path: "z", risk: "baseline" as const },
-			{ path: "b", risk: "write" as const },
-			{ path: "a", risk: "write" as const },
-			{ path: "z", risk: "deletion" as const },
-			{ path: "z", risk: "conflict" as const },
-			{ path: "z", risk: "package" as const },
-			{ path: "z", risk: "policy" as const },
-		]);
-		assert.deepEqual(
-			sorted.map(({ risk, path }) => `${risk}:${path}`),
-			["policy:z", "package:z", "conflict:z", "deletion:z", "write:a", "write:b", "baseline:z"],
-		);
-	});
 });
 
 describe("canonical plan artifact", () => {

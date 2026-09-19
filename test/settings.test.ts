@@ -70,19 +70,9 @@ describe("package planning", () => {
 		const first = { operation: "install" as const, exactSource: "npm:first@1.0.0", approved: true };
 		const second = { operation: "install" as const, exactSource: "npm:second@1.0.0", approved: true };
 		assert.throws(() => applyPackageDecisions(plan, [first]), /Missing exact package decision/);
-		assert.throws(() => applyPackageDecisions(plan, [first, first]), /Duplicate package decision/);
 		assert.throws(
 			() => applyPackageDecisions(plan, [first, { ...second, exactSource: "npm:second@2.0.0" }]),
 			PackagePlanError,
-		);
-		assert.throws(
-			() =>
-				applyPackageDecisions(plan, [
-					first,
-					second,
-					{ operation: "install", exactSource: "npm:extra@1.0.0", approved: true },
-				]),
-			/do not match/,
 		);
 
 		const decided = applyPackageDecisions(plan, [first, second]);

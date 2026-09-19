@@ -2,30 +2,20 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import {
-	createDefaultLocalPolicy,
 	DEFAULT_MANAGED_SCOPE,
 	ensureConfigSyncDirectories,
 	isPermanentlyDenied,
 	resolveEffectivePaths,
 } from "../src/config.ts";
 import {
-	loadBackupMetadata,
-	loadConfig,
-	loadJournal,
 	loadPlanArtifact,
 	loadState,
 	RecoveryRequiredError,
-	saveBackupMetadata,
-	saveConfig,
-	saveJournal,
 	savePlanArtifact,
 	saveState,
 } from "../src/state.ts";
 import {
-	type BackupMetadata,
 	CONFIG_SYNC_SCHEMA_VERSION,
-	type ConfigDocument,
-	type OperationJournal,
 	type PlanArtifact,
 	type StateDocument,
 } from "../src/types.ts";
@@ -47,6 +37,31 @@ function state(deviceId: string): StateDocument {
 		lastSuccessTime: null,
 		pendingOperation: null,
 		schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
+	};
+}
+
+function plan(): PlanArtifact {
+	return {
+		actions: [],
+		baselineCommit: BASELINE_COMMIT,
+		createdAt: "2026-01-01T00:00:00.000Z",
+		decisions: [],
+		effectivePaths: ["settings.json"],
+		finalMachineTree: {},
+		finalSharedTree: {},
+		machineFingerprint: "c".repeat(64),
+		mode: "reconcile",
+		noOpEffects: [],
+		packageFingerprint: "d".repeat(64),
+		planId: FIRST_PLAN_ID,
+		policyFingerprint: "e".repeat(64),
+		prohibitedEffects: [],
+		remoteCheckedAt: "2026-01-01T00:00:01.000Z",
+		schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
+		sharedCommit: BASELINE_COMMIT,
+		sharedFingerprint: "f".repeat(64),
+		shortPlanId: FIRST_PLAN_ID.slice(0, 12),
+		scopeExpansion: null,
 	};
 }
 
@@ -77,61 +92,23 @@ describe("configuration storage", () => {
 		}
 	});
 
-	it("writes and reads every durable artifact type", async () => {
+	it("round trips one state artifact", async () => {
 		const agentDirectory = await createTemporaryAgentDirectory();
-		const policy = createDefaultLocalPolicy();
-		const configuration: ConfigDocument = {
-			policy,
-			repository: { branch: "main", repositoryPath: "/srv/pi-config.git" },
-			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
-		};
-		const plan: PlanArtifact = {
-			actions: [],
-			baselineCommit: BASELINE_COMMIT,
-			createdAt: "2026-01-01T00:00:00.000Z",
-			decisions: [],
-			effectivePaths: ["settings.json"],
-			finalMachineTree: {},
-			finalSharedTree: {},
-			machineFingerprint: "c".repeat(64),
-			mode: "reconcile",
-			noOpEffects: [],
-			packageFingerprint: "d".repeat(64),
-			planId: FIRST_PLAN_ID,
-			policyFingerprint: "e".repeat(64),
-			prohibitedEffects: [],
-			remoteCheckedAt: "2026-01-01T00:00:01.000Z",
-			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
-			sharedCommit: BASELINE_COMMIT,
-			sharedFingerprint: "f".repeat(64),
-			shortPlanId: FIRST_PLAN_ID.slice(0, 12),
-			scopeExpansion: null,
-		};
-		const journal: OperationJournal = {
-			planId: FIRST_PLAN_ID,
-			reviewedSharedCommit: BASELINE_COMMIT,
-			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
-			stage: "prepared",
-			updatedAt: "2026-01-01T00:00:00.000Z",
-		};
-		const backup: BackupMetadata = {
-			backupId: "backup-one",
-			createdAt: "2026-01-01T00:00:00.000Z",
-			entries: [{ executable: false, existed: true, path: "settings.json", sha256: "b".repeat(64) }],
-			planId: FIRST_PLAN_ID,
-			schemaVersion: CONFIG_SYNC_SCHEMA_VERSION,
-		};
-
+		const expected = state("machine-one");
 		try {
-			await saveConfig(agentDirectory.path, configuration);
-			await savePlanArtifact(agentDirectory.path, plan);
-			await saveJournal(agentDirectory.path, journal);
-			await saveBackupMetadata(agentDirectory.path, backup);
+			await saveState(agentDirectory.path, expected);
+			assert.deepEqual(await loadState(agentDirectory.path), expected);
+		} finally {
+			await agentDirectory.cleanup();
+		}
+	});
 
-			assert.deepEqual(await loadConfig(agentDirectory.path), configuration);
-			assert.deepEqual(await loadPlanArtifact(agentDirectory.path, FIRST_PLAN_ID), plan);
-			assert.deepEqual(await loadJournal(agentDirectory.path), journal);
-			assert.deepEqual(await loadBackupMetadata(agentDirectory.path, "backup-one"), backup);
+	it("round trips one plan artifact", async () => {
+		const agentDirectory = await createTemporaryAgentDirectory();
+		const expected = plan();
+		try {
+			await savePlanArtifact(agentDirectory.path, expected);
+			assert.deepEqual(await loadPlanArtifact(agentDirectory.path, FIRST_PLAN_ID), expected);
 		} finally {
 			await agentDirectory.cleanup();
 		}

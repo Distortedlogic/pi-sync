@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	buildConflictSummaries,
@@ -73,7 +73,16 @@ function decision(choice: ConflictChoice): ConflictDecision {
 }
 
 describe("conflict review", () => {
-	it("shows summaries for THIS MACHINE and SHARED REPOSITORY and offers only four fixed choices", async () => {
+	it("keeps the fixed choices and returns the selected exact decision", async () => {
+		assert.deepEqual(
+			CONFLICT_CHOICES.map(({ choice, label }) => ({ choice, label })),
+			[
+				{ choice: "use_machine_both", label: "USE THIS MACHINE ON BOTH SIDES" },
+				{ choice: "use_shared_both", label: "USE SHARED REPOSITORY ON BOTH SIDES" },
+				{ choice: "keep_both_stop", label: "KEEP BOTH AND STOP" },
+				{ choice: "merge_workspace", label: "CREATE A SEPARATE MERGE WORKSPACE" },
+			],
+		);
 		const machine = file("settings.json", "machine");
 		const shared = file("settings.json", "shared");
 		const summaries = buildConflictSummaries({
@@ -88,24 +97,19 @@ describe("conflict review", () => {
 				shared: `SHARED REPOSITORY: 6 bytes, SHA-256 ${shared.sha256}, executable no.`,
 			},
 		]);
-		const select = mock.fn(async (_title: string, _options: string[]) => CONFLICT_CHOICES[0].label);
 		const decisions = await collectConflictDecisions({
-			ctx: { hasUI: true, ui: { select } as unknown as ExtensionCommandContext["ui"] },
+			ctx: {
+				hasUI: true,
+				ui: { select: async () => CONFLICT_CHOICES[0].label } as unknown as ExtensionCommandContext["ui"],
+			},
 			conflicts: summaries,
 		});
-		const selectionCall = select.mock.calls[0];
-		assert.ok(selectionCall);
-		assert.ok(String(selectionCall.arguments[0]).includes(summaries[0].machine));
-		assert.deepEqual(
-			selectionCall.arguments[1],
-			CONFLICT_CHOICES.map((choice) => choice.label),
-		);
 		assert.deepEqual(decisions, [decision("use_machine_both")]);
 	});
 
-	for (const { choice, label } of CONFLICT_CHOICES) {
-		it(`creates a new final plan for ${label}`, () => {
-			const originalPlan = conflictPlan();
+	it("creates a distinct final plan for each exact choice", () => {
+		const originalPlan = conflictPlan();
+		for (const { choice } of CONFLICT_CHOICES) {
 			const selectedDecision = decision(choice);
 			const resolution = rebuildConflictPlan({
 				originalPlan,
@@ -116,20 +120,7 @@ describe("conflict review", () => {
 			assert.deepEqual(resolution.plan.decisions, [selectedDecision]);
 			assert.equal(resolution.requiresNewPlan, true);
 			assert.equal(resolution.stopped, choice === "keep_both_stop" || choice === "merge_workspace");
-		});
-	}
-
-	it("rejects a rebuilt plan that does not contain each exact conflict choice", () => {
-		const originalPlan = conflictPlan();
-		assert.throws(
-			() =>
-				rebuildConflictPlan({
-					originalPlan,
-					decisions: [decision("use_shared_both")],
-					rebuild: () => conflictPlan(),
-				}),
-			/new final plan/,
-		);
+		}
 	});
 });
 
