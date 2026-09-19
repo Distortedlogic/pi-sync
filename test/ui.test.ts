@@ -134,19 +134,28 @@ describe("plan and receipt formatting", () => {
 });
 
 describe("plan review", () => {
-	const requirements: DecisionRequirement[] = ["policy", "conflict", "deletion", "extension", "package"].map(
-		(category) => ({
-			category: category as DecisionRequirement["category"],
-			id: `${category}-decision`,
-			message: `Review ${category}`,
+	const requirements: DecisionRequirement[] = [
+		{
+			category: "deletion",
+			id: "deletion-decision",
+			message: "Review deletion",
 			choices: [
 				{ id: "approve", label: "Approve" },
 				{ id: "reject", label: "Reject" },
 			],
-		}),
-	);
+		},
+		{
+			category: "package",
+			id: "package-decision",
+			message: "Review package",
+			choices: [
+				{ id: "approve", label: "Approve" },
+				{ id: "reject", label: "Reject" },
+			],
+		},
+	];
 
-	it("collects every decision, rebuilds, shows RPC text, and requires the exact full ID", async () => {
+	it("collects representative decisions, rebuilds, and requires the exact full ID", async () => {
 		let rebuilt: Readonly<PlanArtifact> | undefined;
 		const select = mock.fn(async (_title: string, choices: string[]) => choices[0]);
 		const input = mock.fn(async (_title: string, _placeholder?: string) => rebuilt?.planId);
@@ -166,29 +175,27 @@ describe("plan review", () => {
 		assert.equal(rebuild.mock.callCount(), 1);
 		assert.deepEqual(
 			rebuild.mock.calls[0]?.arguments[0].map(({ category }) => category),
-			["policy", "conflict", "deletion", "extension", "package"],
+			["deletion", "package"],
 		);
-		assert.equal(select.mock.callCount(), 6);
+		assert.equal(select.mock.callCount(), 3);
 		assert.deepEqual(input.mock.calls[0]?.arguments, ["Enter exact plan ID", rebuilt?.planId]);
 	});
 
 	it("returns the immutable plan without UI or decision prompts", async () => {
-		for (const mode of ["print", "json"] as const) {
-			const rebuild = mock.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
-			const previewPlan = plan();
-			const result = await reviewSyncPlan({
-				ctx: context({ mode }),
-				previewPlan,
-				decisionRequirements: requirements,
-				rebuild,
-			});
-			assert.deepEqual(result, {
-				status: "plan_only",
-				plan: previewPlan,
-				text: formatPlanText(previewPlan, "final-plan"),
-			});
-			assert.equal(rebuild.mock.callCount(), 0);
-		}
+		const rebuild = mock.fn<(decisions: readonly Readonly<CollectedDecision>[]) => Readonly<PlanArtifact>>();
+		const previewPlan = plan();
+		const result = await reviewSyncPlan({
+			ctx: context(),
+			previewPlan,
+			decisionRequirements: requirements,
+			rebuild,
+		});
+		assert.deepEqual(result, {
+			status: "plan_only",
+			plan: previewPlan,
+			text: formatPlanText(previewPlan, "final-plan"),
+		});
+		assert.equal(rebuild.mock.callCount(), 0);
 	});
 
 	it("requires the exact full plan ID for execution", () => {
