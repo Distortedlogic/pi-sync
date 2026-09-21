@@ -138,7 +138,11 @@ describe("legacy migration", () => {
 			});
 			const baseline = (await loadState(fixture.agentDirectory))?.baseline;
 			assert.equal(baseline?.commit, PUBLISHED_COMMIT);
-			assert.deepEqual(Object.keys(baseline?.files ?? {}), ["agent/models.json", "agent/settings.json"]);
+			assert.deepEqual(Object.keys(baseline?.files ?? {}), [
+				"agent/models.json",
+				"agent/settings.json",
+				"web-search.json",
+			]);
 		} finally {
 			await root.cleanup();
 		}

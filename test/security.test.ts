@@ -31,6 +31,7 @@ async function validationInput(
 		candidateDiff: "",
 		policy: createDefaultLocalPolicy(),
 		managedPatterns,
+		machineSettings: { currentText: "{}\n", finalText: "{}\n" },
 		scannerFactory: CLEAN_SCANNER,
 		...overrides,
 	};
@@ -182,7 +183,7 @@ describe("staged final-tree validation", () => {
 			};
 			await assert.rejects(
 				validateStagedCandidate({ ...input, plannedFinalSharedTree: expected }),
-				/does not match the immutable plan: settings\.json/,
+				/does not match the immutable plan: agent\/settings\.json/,
 			);
 		} finally {
 			await temporary.cleanup();

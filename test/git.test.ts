@@ -144,6 +144,12 @@ describe("Git snapshots and candidates", () => {
 				planId: PLAN_ID,
 				currentSharedTree: current.files,
 				finalSharedTree: finalTree,
+				validation: {
+					machineSettings: {
+						currentText: '{"theme":"dark"}\n',
+						finalText: '{"theme":"light"}\n',
+					},
+				},
 			});
 			assert.equal(candidate.reviewedSharedCommit, seededCommit);
 			const revision = await execFileAsync("git", ["rev-list", "--parents", "-n", "1", candidate.candidateCommit], {
@@ -248,6 +254,12 @@ describe("PUBLISH revalidation", () => {
 					...current.files,
 					"agent/settings.json": file("agent/settings.json", "{}\n"),
 				},
+				validation: {
+					machineSettings: {
+						currentText: '{"theme":"dark"}\n',
+						finalText: "{}\n",
+					},
+				},
 			});
 			const concurrentCommit = await advanceSharedRepository(shared.path, agent.path);
 			const result = await publishCandidateCommit({ exec, candidate });
@@ -286,6 +298,12 @@ describe("PUBLISH revalidation", () => {
 				finalSharedTree: {
 					...current.files,
 					"agent/settings.json": file("agent/settings.json", "{}\n"),
+				},
+				validation: {
+					machineSettings: {
+						currentText: '{"theme":"dark"}\n',
+						finalText: "{}\n",
+					},
 				},
 			});
 			const result = await publishCandidateCommit({ exec, candidate });

@@ -19,6 +19,9 @@ import type { BackupMetadata } from "../src/types.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const PLAN_ID = "1".repeat(64);
+const OLD_SETTINGS = '{"value":"old"}\n';
+const NEW_SETTINGS = '{"value":"new"}\n';
+const CHANGED_SETTINGS = '{"value":"changed-after-review"}\n';
 
 function hash(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
@@ -29,7 +32,7 @@ async function createBackupFixture(agentDirectory: string, machineRoot: string):
 		backupId: "backup-restore",
 		createdAt: "2026-01-01T00:00:00.000Z",
 		entries: [
-			{ executable: false, existed: true, path: "agent/settings.json", sha256: hash("old") },
+			{ executable: false, existed: true, path: "agent/settings.json", sha256: hash(OLD_SETTINGS) },
 			{ executable: null, existed: false, path: "web-search.json", sha256: null },
 		],
 		planId: PLAN_ID,
@@ -40,10 +43,10 @@ async function createBackupFixture(agentDirectory: string, machineRoot: string):
 		mkdir(join(dirname(metadataPath), "files", "agent"), { recursive: true }),
 		mkdir(join(machineRoot, "agent"), { recursive: true }),
 	]);
-	await writeFile(join(dirname(metadataPath), "files", "agent", "settings.json"), "old", { mode: 0o644 });
+	await writeFile(join(dirname(metadataPath), "files", "agent", "settings.json"), OLD_SETTINGS, { mode: 0o644 });
 	await saveBackupMetadata(agentDirectory, metadata);
 	await Promise.all([
-		writeFile(join(machineRoot, "agent", "settings.json"), "new"),
+		writeFile(join(machineRoot, "agent", "settings.json"), NEW_SETTINGS),
 		writeFile(join(machineRoot, "web-search.json"), "created"),
 	]);
 	return metadata;
@@ -114,7 +117,7 @@ describe("backup restore", () => {
 				plan,
 				authorization: review.authorization,
 			});
-			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), "old");
+			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), OLD_SETTINGS);
 			await assert.rejects(
 				readFile(join(machineRoot, "web-search.json"), "utf8"),
 				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
@@ -136,7 +139,7 @@ describe("backup restore", () => {
 				backupId: metadata.backupId,
 				createdAt: "2026-01-02T00:00:00.000Z",
 			});
-			await writeFile(join(machineRoot, "agent", "settings.json"), "changed-after-review");
+			await writeFile(join(machineRoot, "agent", "settings.json"), CHANGED_SETTINGS);
 			await assert.rejects(
 				executeRestorePlan({
 					agentDirectory,
@@ -146,7 +149,7 @@ describe("backup restore", () => {
 				}),
 				RestorePlanExpiredError,
 			);
-			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), "changed-after-review");
+			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), CHANGED_SETTINGS);
 			assert.equal(await readFile(join(machineRoot, "web-search.json"), "utf8"), "created");
 		} finally {
 			await temporary.cleanup();
