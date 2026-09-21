@@ -1,4 +1,6 @@
 pi-preload:
+  excludes:
+    - ".tasks"
   presets:
     - "pi-extension"
   includes:
