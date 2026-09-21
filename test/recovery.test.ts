@@ -29,18 +29,23 @@ async function createBackupFixture(agentDirectory: string, machineRoot: string):
 		backupId: "backup-restore",
 		createdAt: "2026-01-01T00:00:00.000Z",
 		entries: [
-			{ executable: false, existed: true, path: "a.txt", sha256: hash("old") },
-			{ executable: null, existed: false, path: "b.txt", sha256: null },
+			{ executable: false, existed: true, path: "agent/settings.json", sha256: hash("old") },
+			{ executable: null, existed: false, path: "web-search.json", sha256: null },
 		],
 		planId: PLAN_ID,
 		schemaVersion: 1,
 	};
 	const metadataPath = getBackupMetadataPath(agentDirectory, metadata.backupId);
-	await mkdir(join(dirname(metadataPath), "files"), { recursive: true });
-	await writeFile(join(dirname(metadataPath), "files", "a.txt"), "old", { mode: 0o644 });
+	await Promise.all([
+		mkdir(join(dirname(metadataPath), "files", "agent"), { recursive: true }),
+		mkdir(join(machineRoot, "agent"), { recursive: true }),
+	]);
+	await writeFile(join(dirname(metadataPath), "files", "agent", "settings.json"), "old", { mode: 0o644 });
 	await saveBackupMetadata(agentDirectory, metadata);
-	await mkdir(machineRoot, { recursive: true });
-	await Promise.all([writeFile(join(machineRoot, "a.txt"), "new"), writeFile(join(machineRoot, "b.txt"), "created")]);
+	await Promise.all([
+		writeFile(join(machineRoot, "agent", "settings.json"), "new"),
+		writeFile(join(machineRoot, "web-search.json"), "created"),
+	]);
 	return metadata;
 }
 
@@ -49,7 +54,7 @@ describe("recovery decisions", () => {
 		const recovery: IncompleteJournal = {
 			backupId: "backup-restore",
 			message: `RECOVERY REQUIRED: Plan ${PLAN_ID} stopped after backup_verified.`,
-			nextStep: "apply_machine_files",
+			nextStep: "apply_packages",
 			planId: PLAN_ID,
 			publishedCommit: "2".repeat(40),
 			stage: "backup_verified",
@@ -92,7 +97,7 @@ describe("backup restore", () => {
 			});
 			assert.deepEqual(
 				plan.actions.map((action) => `${action.action}:${action.path}`),
-				["WRITE ON THIS MACHINE:a.txt", "DELETE FROM THIS MACHINE:b.txt"],
+				["WRITE ON THIS MACHINE:agent/settings.json", "DELETE FROM THIS MACHINE:web-search.json"],
 			);
 			assert.throws(() => authorizeRestorePlan(plan, plan.shortPlanId), /Exact restore plan ID/);
 			const select = mock.fn(async () => "Enter exact restore plan ID");
@@ -109,9 +114,9 @@ describe("backup restore", () => {
 				plan,
 				authorization: review.authorization,
 			});
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "old");
+			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), "old");
 			await assert.rejects(
-				readFile(join(machineRoot, "b.txt"), "utf8"),
+				readFile(join(machineRoot, "web-search.json"), "utf8"),
 				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
 			);
 		} finally {
@@ -131,7 +136,7 @@ describe("backup restore", () => {
 				backupId: metadata.backupId,
 				createdAt: "2026-01-02T00:00:00.000Z",
 			});
-			await writeFile(join(machineRoot, "a.txt"), "changed-after-review");
+			await writeFile(join(machineRoot, "agent", "settings.json"), "changed-after-review");
 			await assert.rejects(
 				executeRestorePlan({
 					agentDirectory,
@@ -141,8 +146,8 @@ describe("backup restore", () => {
 				}),
 				RestorePlanExpiredError,
 			);
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "changed-after-review");
-			assert.equal(await readFile(join(machineRoot, "b.txt"), "utf8"), "created");
+			assert.equal(await readFile(join(machineRoot, "agent", "settings.json"), "utf8"), "changed-after-review");
+			assert.equal(await readFile(join(machineRoot, "web-search.json"), "utf8"), "created");
 		} finally {
 			await temporary.cleanup();
 		}

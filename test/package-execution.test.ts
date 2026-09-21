@@ -101,12 +101,12 @@ function packageFixture(
 		sharedFingerprint: "b".repeat(64),
 		policyFingerprint: "c".repeat(64),
 		packageFingerprint: packageSetFingerprint(parsedPlanned.packages),
-		effectivePaths: ["settings.json"],
+		effectivePaths: ["agent/settings.json"],
 		scopeExpansion: null,
 		actions,
 		decisions,
 		finalMachineTree: {
-			"settings.json": {
+			"agent/settings.json": {
 				comparisonSha256: parsedPlanned.fingerprint,
 				executable: false,
 				sha256: exactSettingsHash,
@@ -135,7 +135,7 @@ async function prepareExecution(agentDirectory: string, fixture: PackageFixture)
 		planId: fixture.plan.planId,
 		reviewedSharedCommit: fixture.plan.sharedCommit,
 		schemaVersion: 1,
-		stage: "machine_files_applied",
+		stage: "backup_verified",
 		updatedAt: "2026-01-01T00:00:00.000Z",
 	});
 }
@@ -151,6 +151,7 @@ async function execute(options: {
 		exec: options.exec,
 		cwd: dirname(options.agentDirectory),
 		agentDirectory: options.agentDirectory,
+		machineRoot: dirname(options.agentDirectory),
 		plan: options.fixture.plan,
 		authorization: authorizePlanExecution(options.fixture.plan, options.fixture.plan.planId),
 		plannedSettingsText: options.fixture.plannedSettingsText,
@@ -204,6 +205,42 @@ describe("approved package execution", () => {
 			const finalSettings = parseSettings(fixture.plannedSettingsText, { source: "machine", policy: fixture.policy });
 			assert.equal(packageSetFingerprint(finalSettings.packages), fixture.plan.packageFingerprint);
 			assert.deepEqual(rememberApprovals.mock.calls[0]?.arguments, [["npm:install@1.0.0"]]);
+		} finally {
+			await temporary.cleanup();
+		}
+	});
+
+	it("does not repeat a package action recorded as completed", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const agentDirectory = join(temporary.path, "agent");
+		const calls: PiCall[] = [];
+		const fixture = packageFixture(
+			[],
+			["npm:one@1.0.0"],
+			[{ operation: "install", identity: "npm:one", exactSource: "npm:one@1.0.0" }],
+		);
+		try {
+			await prepareExecution(agentDirectory, fixture);
+			const journal = await loadJournal(agentDirectory);
+			const action = fixture.plan.actions.find((candidate) => candidate.risk === "package");
+			if (!journal || !action) throw new Error("Package resume fixture is invalid.");
+			await saveJournal(agentDirectory, {
+				...journal,
+				packageEvents: [
+					{
+						actionId: packageActionDecisionId(action),
+						operation: "install",
+						status: "completed",
+						timestamp: "2026-01-01T00:00:01.000Z",
+					},
+				],
+			});
+
+			const result = await execute({ agentDirectory, fixture, exec: createExec(calls) });
+
+			assert.equal(result.status, "success");
+			assert.deepEqual(calls, []);
+			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.plannedSettingsText);
 		} finally {
 			await temporary.cleanup();
 		}

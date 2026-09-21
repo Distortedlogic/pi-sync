@@ -165,6 +165,9 @@ function createSteps(
 		verifyFinalMachine: async () => {
 			events.push("final_verified");
 		},
+		restoreSecrets: async () => {
+			events.push("secrets_restored");
+		},
 		restoreMachine: async () => {
 			events.push("machine_restored");
 			return { restored: true };
@@ -208,9 +211,10 @@ describe("transaction coordinator", () => {
 				"candidate_validated",
 				"shared_published",
 				"backup_verified",
-				"machine_files_applied",
 				"packages_applied",
+				"machine_files_applied",
 				"final_verified",
+				"secrets_restored",
 			]);
 			assert.equal(result.status, "success");
 			assert.equal(result.journal.stage, "complete");
@@ -219,6 +223,26 @@ describe("transaction coordinator", () => {
 			const state = await loadState(temporary.path);
 			assert.deepEqual(state?.baseline, { commit: CANDIDATE, files: plan.finalSharedTree });
 			assert.equal(state?.pendingOperation, null);
+			assert.equal((await loadJournal(temporary.path))?.stage, "complete");
+		} finally {
+			await temporary.cleanup();
+		}
+	});
+
+	it("completes a no-op reconciliation without publish, backup, package, or file effects", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const plan = createPlan({ actions: [], decisions: [], finalMachineTree: {}, finalSharedTree: {} });
+		const events: string[] = [];
+		try {
+			await prepare(temporary.path, plan);
+			const result = await execute({
+				agentDirectory: temporary.path,
+				plan,
+				steps: createSteps(plan, events),
+			});
+			assert.deepEqual(events, ["fetch_and_revalidate", "final_verified", "secrets_restored"]);
+			assert.deepEqual(result.receipt.completedActionIds, []);
+			assert.equal(result.publishedCommit, COMMIT);
 			assert.equal((await loadJournal(temporary.path))?.stage, "complete");
 		} finally {
 			await temporary.cleanup();
@@ -315,18 +339,28 @@ describe("transaction coordinator", () => {
 			assert.ok(failure instanceof TransactionRecoveryRequiredError);
 			assert.equal(failure.restored, true);
 			assert.equal(events.at(-1), "machine_restored");
-			assert.equal((await loadJournal(temporary.path))?.stage, "backup_verified");
+			assert.equal((await loadJournal(temporary.path))?.stage, "packages_applied");
 			assert.deepEqual((await loadState(temporary.path))?.pendingOperation, {
 				kind: "pending_apply",
 				planId: plan.planId,
 				publishedCommit: CANDIDATE,
 			});
+
+			const resumeEvents: string[] = [];
+			const resumed = await execute({
+				agentDirectory: temporary.path,
+				plan,
+				steps: createSteps(plan, resumeEvents),
+			});
+			assert.equal(resumed.status, "success");
+			assert.deepEqual(resumeEvents, ["machine_files_applied", "final_verified", "secrets_restored"]);
+			assert.equal((await loadJournal(temporary.path))?.stage, "complete");
 		} finally {
 			await temporary.cleanup();
 		}
 	});
 
-	it("retains final verification journal state when baseline state writing fails", async () => {
+	it("retains secret restoration journal state when baseline state writing fails", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const plan = createPlan();
 		const events: string[] = [];
@@ -339,7 +373,7 @@ describe("transaction coordinator", () => {
 				execute({ agentDirectory: temporary.path, plan, steps: createSteps(plan, events), writeState }),
 				TransactionRecoveryRequiredError,
 			);
-			assert.equal((await loadJournal(temporary.path))?.stage, "final_verified");
+			assert.equal((await loadJournal(temporary.path))?.stage, "secrets_restored");
 			assert.ok(!events.includes("machine_restored"));
 			assert.equal((await loadState(temporary.path))?.baseline, null);
 		} finally {

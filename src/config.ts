@@ -1,27 +1,98 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { minimatch } from "minimatch";
-import type { LocalPolicy } from "./types.ts";
+import type { LocalPolicy, SharedManifest } from "./types.ts";
 
 export const DEFAULT_MANAGED_SCOPE = Object.freeze([
-	"AGENTS.md",
-	"SYSTEM.md",
-	"extensions/**",
-	"keybindings.json",
-	"prompts/**",
-	"settings.json",
-	"skills/**",
-	"themes/**",
+	"acp.json",
+	"agent/AGENTS.md",
+	"agent/APPEND_SYSTEM.md",
+	"agent/SYSTEM.md",
+	"agent/agents/**",
+	"agent/context-preload/**",
+	"agent/extensions/**",
+	"agent/keybindings.json",
+	"agent/models.json",
+	"agent/prompts/**",
+	"agent/settings.json",
+	"agent/skills/**",
+	"agent/themes/**",
+	"mermaid/package.json",
+	"mermaid/puppeteer.json",
+	"mermaid/vscode-dark-high-contrast.json",
+	"web-search.json",
 ]);
+
+export const DEFAULT_BITWARDEN_MANIFEST = Object.freeze({
+	projectId: "bdf0f162-017c-4811-a0f4-b48e010f6287" as const,
+	environment: Object.freeze({
+		ALIBABA_TOKEN_PLAN_API_KEY: "alibaba-token-plan-api-key",
+		EXA_API_KEY: "exa-api-key",
+		FORGEJO_TOKEN: "forgejo-token",
+		GEMINI_API_KEY: "gemini-api-key",
+		KIMI_API_KEY: "kimi-api-key",
+		LANGFUSE_BASE_URL: "langfuse-base-url",
+		LANGFUSE_PUBLIC_KEY: "langfuse-public-key",
+		LANGFUSE_SECRET_KEY: "langfuse-secret-key",
+		PERPLEXITY_API_KEY: "perplexity-api-key",
+		PINCHTAB_TOKEN: "pinchtab-token",
+		SKILLSMP_API_KEY: "skillsmp-api-key",
+	}),
+	authJsonKey: "pi-auth-json",
+});
+
+export function createDefaultSharedManifest(managedScope: readonly string[]): SharedManifest {
+	return {
+		bitwarden: {
+			projectId: DEFAULT_BITWARDEN_MANIFEST.projectId,
+			environment: { ...DEFAULT_BITWARDEN_MANIFEST.environment },
+			authJsonKey: DEFAULT_BITWARDEN_MANIFEST.authJsonKey,
+		},
+		managedScope: [...managedScope],
+		schemaVersion: 1,
+	};
+}
 
 export const PERMANENT_DENY_PATTERNS = Object.freeze([
 	".config-sync/**",
+	"**/.config-sync/**",
 	".env",
 	"**/.env",
 	"auth.json",
-	"git/**",
-	"npm/**",
+	"**/auth.json",
+	"agent/git/**",
+	"agent/npm/**",
+	"**/node_modules/**",
+	"**/bin/**",
+	"**/*.bin",
+	"**/*.dll",
+	"**/*.dylib",
+	"**/*.exe",
+	"**/*.node",
+	"**/*.so",
 	"sessions/**",
+	"**/sessions/**",
+	"cache/**",
+	"**/.cache/**",
+	"**/cache/**",
+	"tmp/**",
+	"**/.tmp/**",
+	"**/tmp/**",
+	"**/*.temp",
+	"**/*.tmp",
+	"**/*~",
+	"**/.DS_Store",
+	"**/*.db",
+	"**/*.sqlite",
+	"**/*.sqlite-*",
+	"**/store.json",
+	"**/usage.json",
+	"**/trusted-projects.json",
+	"**/oauth.json",
+	"**/oauth/**",
+	"**/.install-*",
+	"**/.installed",
+	"**/.installer-*",
 ]);
 
 export interface ConfigSyncPaths {
@@ -93,7 +164,7 @@ export function createDefaultLocalPolicy(): LocalPolicy {
 		approvedScope: [...DEFAULT_MANAGED_SCOPE],
 		approvedSharedPackageSchemes: ["git", "https", "npm", "ssh"],
 		machineOnlyPackageSources: [],
-		machineOnlySettings: [],
+		machineOnlySettings: ["/lastChangelogVersion"],
 		requirePinnedSharedPackages: true,
 	};
 }

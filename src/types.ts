@@ -59,8 +59,19 @@ export const ConfigDocumentSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+const BwsKeySchema = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" });
+const EnvironmentNameSchema = Type.String({ pattern: "^[A-Z][A-Z0-9_]*$" });
+
 export const SharedManifestSchema = Type.Object(
 	{
+		bitwarden: Type.Object(
+			{
+				projectId: Type.Literal("bdf0f162-017c-4811-a0f4-b48e010f6287"),
+				environment: Type.Record(EnvironmentNameSchema, BwsKeySchema),
+				authJsonKey: BwsKeySchema,
+			},
+			{ additionalProperties: false },
+		),
 		managedScope: ScopeSchema,
 		schemaVersion: SchemaVersionSchema,
 	},
@@ -80,9 +91,10 @@ export const JournalStageSchema = Type.Union([
 	Type.Literal("candidate_created"),
 	Type.Literal("shared_published"),
 	Type.Literal("backup_verified"),
-	Type.Literal("machine_files_applied"),
 	Type.Literal("packages_applied"),
+	Type.Literal("machine_files_applied"),
 	Type.Literal("final_verified"),
+	Type.Literal("secrets_restored"),
 	Type.Literal("state_committed"),
 	Type.Literal("complete"),
 ]);

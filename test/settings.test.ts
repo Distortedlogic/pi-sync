@@ -103,17 +103,19 @@ describe("APPLY settings plan", () => {
 	it("preserves machine-only settings and implicit and explicit machine-only packages", () => {
 		const machineTool = "npm:machine-tool@1.0.0";
 		const selectedPolicy = policy({
-			machineOnlySettings: ["/environment/token"],
+			machineOnlySettings: ["/environment/token", "/lastChangelogVersion"],
 			machineOnlyPackageSources: [machineTool],
 		});
 		const plan = createApplySettingsPlan({
 			machineText: JSON.stringify({
 				theme: "dark",
+				lastChangelogVersion: "machine-version",
 				environment: { token: "machine-value" },
 				packages: ["file:../private", machineTool, "npm:example@1.0.0"],
 			}),
 			sharedText: JSON.stringify({
 				theme: "light",
+				lastChangelogVersion: "shared-version",
 				environment: { token: "shared-value" },
 				packages: ["npm:example@2.0.0", "npm:new@1.0.0"],
 			}),
@@ -130,11 +132,12 @@ describe("APPLY settings plan", () => {
 		});
 		const finalSettings = JSON.parse(plan.finalSettingsText) as Record<string, unknown>;
 		assert.equal(finalSettings.theme, "light");
+		assert.equal(finalSettings.lastChangelogVersion, "machine-version");
 		assert.deepEqual(finalSettings.environment, { token: "machine-value" });
 		assert.deepEqual(finalSettings.packages, ["file:../private", "npm:example@2.0.0", machineTool, "npm:new@1.0.0"]);
 		assert.deepEqual(
 			plan.preservedMachineSettings.map(({ pointer }) => pointer),
-			["/environment/token"],
+			["/environment/token", "/lastChangelogVersion"],
 		);
 		assert.deepEqual(
 			plan.settingChanges.map(({ pointer }) => pointer),

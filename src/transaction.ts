@@ -316,6 +316,10 @@ async function writeMachineFile(
 	const absolutePath = await assertSafePath(operations, machineRoot, path);
 	const existing = await pathDetails(operations, absolutePath);
 	if (existing && !existing.isFile()) throw new MachineApplyError(`Machine path is not a regular file: ${path}`);
+	if (existing) {
+		const content = await operations.readFile(absolutePath);
+		if (hash(content) === file.sha256 && portableExecutableBit(existing.mode) === file.executable) return;
+	}
 	await operations.mkdir(dirname(absolutePath));
 	await operations.writeAtomic(absolutePath, await exactBytes(file, path), file.executable ? 0o755 : 0o644);
 	if (process.platform !== "win32") await operations.chmod(absolutePath, file.executable ? 0o755 : 0o644);
@@ -325,7 +329,8 @@ async function writeMachineFile(
 async function deleteMachineFile(operations: MachineApplyOperations, machineRoot: string, path: string): Promise<void> {
 	const absolutePath = await assertSafePath(operations, machineRoot, path);
 	const existing = await pathDetails(operations, absolutePath);
-	if (!existing?.isFile()) throw new MachineApplyError(`Machine file is unavailable for deletion: ${path}`);
+	if (!existing) return;
+	if (!existing.isFile()) throw new MachineApplyError(`Machine file is unavailable for deletion: ${path}`);
 	await operations.unlink(absolutePath);
 	await operations.syncDirectory(dirname(absolutePath));
 }

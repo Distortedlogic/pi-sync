@@ -19,7 +19,7 @@ function state(deviceId: string): StateDocument {
 		baseline: {
 			commit: BASELINE_COMMIT,
 			files: {
-				"settings.json": { comparisonSha256: "b".repeat(64), executable: false, sha256: "b".repeat(64) },
+				"agent/settings.json": { comparisonSha256: "b".repeat(64), executable: false, sha256: "b".repeat(64) },
 			},
 		},
 		deviceId,
@@ -36,7 +36,7 @@ function plan(): PlanArtifact {
 		baselineCommit: BASELINE_COMMIT,
 		createdAt: "2026-01-01T00:00:00.000Z",
 		decisions: [],
-		effectivePaths: ["settings.json"],
+		effectivePaths: ["agent/settings.json"],
 		finalMachineTree: {},
 		finalSharedTree: {},
 		machineFingerprint: "c".repeat(64),
@@ -106,21 +106,54 @@ describe("configuration storage", () => {
 });
 
 describe("managed scope", () => {
-	it("excludes models.json from the default managed scope", () => {
-		const paths = resolveEffectivePaths(["models.json", "settings.json"], ["**/*"], DEFAULT_MANAGED_SCOPE);
-		assert.deepEqual(paths, ["settings.json"]);
+	it("includes persistent Pi-root files and extension-installed resources", () => {
+		const candidates = [
+			"acp.json",
+			"agent/AGENTS.md",
+			"agent/agents/reviewer.md",
+			"agent/context-preload/default.json",
+			"agent/extensions/example/index.ts",
+			"agent/keybindings.json",
+			"agent/models.json",
+			"agent/prompts/review.md",
+			"agent/settings.json",
+			"agent/skills/example/SKILL.md",
+			"agent/themes/example.json",
+			"mermaid/package.json",
+			"mermaid/puppeteer.json",
+			"mermaid/vscode-dark-high-contrast.json",
+			"web-search.json",
+		];
+		assert.deepEqual(resolveEffectivePaths(candidates, ["**/*"], DEFAULT_MANAGED_SCOPE), [...candidates].sort());
+	});
+
+	it("includes agent models and settings in the default managed scope", () => {
+		const paths = resolveEffectivePaths(["agent/models.json", "agent/settings.json"], ["**/*"], DEFAULT_MANAGED_SCOPE);
+		assert.deepEqual(paths, ["agent/models.json", "agent/settings.json"]);
 	});
 
 	it("always applies permanent deny rules", () => {
 		const denied = [
-			".config-sync/state.json",
-			".env",
-			"auth.json",
-			"git/example/HEAD",
-			"npm/package/index.js",
-			"sessions/a.jsonl",
+			"agent/.config-sync/state.json",
+			"agent/.env",
+			"agent/auth.json",
+			"agent/git/example/HEAD",
+			"agent/npm/package/index.js",
+			"mermaid/node_modules/@mermaid-js/mermaid-cli/package.json",
+			"agent/extensions/example/bin/tool",
+			"agent/extensions/example/node_modules/dependency/index.js",
+			"agent/sessions/a.jsonl",
+			"agent/cache/catalog.json",
+			"agent/tmp/work.tmp",
+			"agent/agents/store.json",
+			"agent/agents/usage.json",
+			"agent/trusted-projects.json",
+			"agent/oauth/token.json",
+			"agent/extensions/example/.installed",
 		];
 		for (const path of denied) assert.equal(isPermanentlyDenied(path), true);
-		assert.deepEqual(resolveEffectivePaths(["settings.json", ...denied], ["**/*"], ["**/*"]), ["settings.json"]);
+		assert.deepEqual(resolveEffectivePaths(["agent/settings.json", ...denied], ["**/*"], ["**/*"]), [
+			"agent/settings.json",
+		]);
 	});
 });

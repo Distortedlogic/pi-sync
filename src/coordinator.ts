@@ -11,9 +11,10 @@ export const TRANSACTION_JOURNAL_STAGES: readonly JournalStage[] = Object.freeze
 	"candidate_created",
 	"shared_published",
 	"backup_verified",
-	"machine_files_applied",
 	"packages_applied",
+	"machine_files_applied",
 	"final_verified",
+	"secrets_restored",
 	"state_committed",
 	"complete",
 ]);
@@ -25,6 +26,7 @@ export type TransactionRecoveryStep =
 	| "apply_machine_files"
 	| "apply_packages"
 	| "verify_final_machine"
+	| "restore_secrets"
 	| "commit_state"
 	| "complete_journal"
 	| "none";
@@ -78,6 +80,7 @@ export interface TransactionSteps {
 		sharedCommit: string;
 		signal?: AbortSignal;
 	}): Promise<void>;
+	restoreSecrets(options: { plan: Readonly<PlanArtifact>; sharedCommit: string; signal?: AbortSignal }): Promise<void>;
 	restoreMachine?(options: {
 		plan: Readonly<PlanArtifact>;
 		sharedCommit: string;
@@ -150,7 +153,10 @@ function actionPhase(action: Readonly<PlanArtifact["actions"][number]>, plan: Re
 		throw new TransactionPlanExpiredError();
 	}
 	if (action.risk === "policy" || action.direction === "baseline-only") return "state";
-	if (action.codeExecution || (action.path === "settings.json" && plan.actions.some((entry) => entry.codeExecution))) {
+	if (
+		action.risk === "package" ||
+		(action.path === "agent/settings.json" && plan.actions.some((entry) => entry.risk === "package"))
+	) {
 		return "packages";
 	}
 	if (action.direction === "machine-to-shared") return "shared";
@@ -208,12 +214,14 @@ export function nextTransactionRecoveryStep(stage: JournalStage): TransactionRec
 		case "shared_published":
 			return "create_verified_backup";
 		case "backup_verified":
-			return "apply_machine_files";
-		case "machine_files_applied":
 			return "apply_packages";
 		case "packages_applied":
+			return "apply_machine_files";
+		case "machine_files_applied":
 			return "verify_final_machine";
 		case "final_verified":
+			return "restore_secrets";
+		case "secrets_restored":
 			return "commit_state";
 		case "state_committed":
 			return "complete_journal";
@@ -314,7 +322,7 @@ function createCompletionReceipt(
 	});
 }
 
-async function executeWithLock(options: {
+interface TransactionExecutionOptions {
 	agentDirectory: string;
 	plan: Readonly<PlanArtifact>;
 	authorization: Readonly<PlanExecutionAuthorization>;
@@ -323,7 +331,228 @@ async function executeWithLock(options: {
 	now(): string;
 	onJournalStage?(journal: Readonly<OperationJournal>): Promise<void> | void;
 	writeState(state: StateDocument): Promise<void>;
-}): Promise<TransactionSuccess> {
+}
+
+async function resumeWithLock(
+	options: TransactionExecutionOptions,
+	currentState: Readonly<StateDocument>,
+	initialJournal: Readonly<OperationJournal>,
+): Promise<TransactionSuccess> {
+	if (
+		initialJournal.planId !== options.plan.planId ||
+		![
+			"backup_verified",
+			"packages_applied",
+			"machine_files_applied",
+			"final_verified",
+			"secrets_restored",
+			"state_committed",
+		].includes(initialJournal.stage)
+	) {
+		throw new TransactionRecoveryRequiredError(
+			`Plan ${initialJournal.planId} stopped at ${initialJournal.stage}. This stage cannot resume file application.`,
+		);
+	}
+	if (!initialJournal.publishedCommit) {
+		throw new TransactionRecoveryRequiredError("The interrupted transaction has no recorded shared commit.");
+	}
+	validateCommit(initialJournal.publishedCommit, "Recorded SHARED REPOSITORY");
+	const publishedCommit = initialJournal.publishedCommit;
+	const hasMachineFiles = actionIdsForPhase(options.plan, "machine").length > 0;
+	const hasPackages = actionIdsForPhase(options.plan, "packages").length > 0;
+	const hasMachineEffects = hasMachineFiles || hasPackages;
+	const backupId = initialJournal.backupId;
+	if (hasMachineEffects && !backupId) {
+		throw new TransactionRecoveryRequiredError("The interrupted transaction has no recorded verified backup.");
+	}
+	if (backupId) validateBackupId(backupId);
+	if (initialJournal.stage === "backup_verified" && hasPackages && !options.steps.applyPackages) {
+		throw new Error("Package APPLY step is missing.");
+	}
+	if (
+		(initialJournal.stage === "backup_verified" || initialJournal.stage === "packages_applied") &&
+		hasMachineFiles &&
+		!options.steps.applyMachineFiles
+	) {
+		throw new Error("Machine file APPLY step is missing.");
+	}
+
+	let journal = { ...initialJournal };
+	const recoverApply = async (error: unknown, machineEffectsStarted: boolean): Promise<never> => {
+		let restored = !machineEffectsStarted;
+		let manualRecoveryPaths: readonly string[] = [];
+		if (machineEffectsStarted && backupId && options.steps.restoreMachine) {
+			try {
+				const result = await options.steps.restoreMachine({
+					plan: options.plan,
+					sharedCommit: publishedCommit,
+					backupId,
+				});
+				restored = result.restored;
+				manualRecoveryPaths = result.manualRecoveryPaths ?? [];
+			} catch {
+				restored = false;
+			}
+		}
+		const recoveryState = buildRecoveryState({
+			current: currentState,
+			planId: options.plan.planId,
+			journal,
+			publishedCommit,
+			backupId,
+			publicationCompleted: actionIdsForPhase(options.plan, "shared").length > 0,
+		});
+		await options.writeState(recoveryState);
+		throw new TransactionRecoveryRequiredError(
+			restored
+				? "Resumed APPLY failed. THIS MACHINE was restored and the exact shared commit is pending."
+				: "Resumed APPLY failed and THIS MACHINE needs manual recovery.",
+			{ publishedCommit, backupId, restored, manualRecoveryPaths, cause: error },
+		);
+	};
+
+	if (journal.stage === "backup_verified") {
+		let machineEffectsStarted = false;
+		try {
+			if (hasPackages) {
+				machineEffectsStarted = true;
+				await options.steps.applyPackages?.({
+					plan: options.plan,
+					sharedCommit: publishedCommit,
+					backupId: backupId as string,
+					signal: options.signal,
+				});
+				journal = await requireCurrentJournal(options.agentDirectory, options.plan.planId, "backup_verified");
+			}
+			journal = await advanceJournal({
+				agentDirectory: options.agentDirectory,
+				journal,
+				next: "packages_applied",
+				plan: options.plan,
+				completedPhase: "packages",
+				now: options.now,
+			});
+		} catch (error) {
+			return recoverApply(error, machineEffectsStarted);
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	if (journal.stage === "packages_applied") {
+		let machineEffectsStarted = false;
+		try {
+			if (hasMachineFiles) {
+				machineEffectsStarted = true;
+				await options.steps.applyMachineFiles?.({
+					plan: options.plan,
+					sharedCommit: publishedCommit,
+					backupId: backupId as string,
+					signal: options.signal,
+				});
+			}
+			journal = await advanceJournal({
+				agentDirectory: options.agentDirectory,
+				journal,
+				next: "machine_files_applied",
+				plan: options.plan,
+				completedPhase: "machine",
+				now: options.now,
+			});
+		} catch (error) {
+			return recoverApply(error, machineEffectsStarted);
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	if (journal.stage === "machine_files_applied") {
+		try {
+			await options.steps.verifyFinalMachine({
+				plan: options.plan,
+				sharedCommit: publishedCommit,
+				signal: options.signal,
+			});
+			journal = await advanceJournal({
+				agentDirectory: options.agentDirectory,
+				journal,
+				next: "final_verified",
+				plan: options.plan,
+				now: options.now,
+			});
+		} catch (error) {
+			return recoverApply(error, false);
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	if (journal.stage === "final_verified") {
+		try {
+			await options.steps.restoreSecrets({
+				plan: options.plan,
+				sharedCommit: publishedCommit,
+				signal: options.signal,
+			});
+			journal = await advanceJournal({
+				agentDirectory: options.agentDirectory,
+				journal,
+				next: "secrets_restored",
+				plan: options.plan,
+				now: options.now,
+			});
+		} catch (error) {
+			throw new TransactionRecoveryRequiredError("Agent secret restore failed after managed file verification.", {
+				publishedCommit,
+				backupId,
+				cause: error,
+			});
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	let nextState: StateDocument = { ...currentState };
+	if (journal.stage === "secrets_restored") {
+		nextState = buildNextState(currentState, options.plan, publishedCommit, backupId, options.now());
+		try {
+			await options.writeState(nextState);
+			journal = await advanceJournal({
+				agentDirectory: options.agentDirectory,
+				journal,
+				next: "state_committed",
+				plan: options.plan,
+				completedPhase: "state",
+				now: options.now,
+			});
+		} catch (error) {
+			throw new TransactionRecoveryRequiredError(
+				"Resumed APPLY verified, but baseline state or its journal could not be recorded.",
+				{ publishedCommit, backupId, cause: error },
+			);
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	if (journal.stage === "state_committed") {
+		journal = await advanceJournal({
+			agentDirectory: options.agentDirectory,
+			journal,
+			next: "complete",
+			plan: options.plan,
+			now: options.now,
+		});
+		await options.onJournalStage?.(journal);
+	}
+
+	const receipt = createCompletionReceipt(options.plan, journal);
+	return {
+		status: "success",
+		planId: options.plan.planId,
+		publishedCommit,
+		journal: Object.freeze({ ...journal }),
+		state: Object.freeze({ ...nextState }),
+		receipt,
+	};
+}
+
+async function executeWithLock(options: TransactionExecutionOptions): Promise<TransactionSuccess> {
 	options.signal?.throwIfAborted();
 	if (options.authorization.planId !== options.plan.planId) throw new TransactionPlanExpiredError();
 	assertPlanArtifactIntegrity(options.plan);
@@ -337,9 +566,7 @@ async function executeWithLock(options: {
 	if (!currentState) throw new TransactionRecoveryRequiredError("State is missing. No configuration was changed.");
 	const existingJournal = await loadJournal(options.agentDirectory);
 	if (existingJournal && existingJournal.stage !== "complete") {
-		throw new TransactionRecoveryRequiredError(
-			`Plan ${existingJournal.planId} stopped at ${existingJournal.stage}. Run recovery before execution.`,
-		);
+		return resumeWithLock(options, currentState, existingJournal);
 	}
 
 	const requiresPublication = actionIdsForPhase(options.plan, "shared").length > 0;
@@ -522,6 +749,30 @@ async function executeWithLock(options: {
 
 	let machineEffectsStarted = false;
 	try {
+		if (hasPackages) {
+			machineEffectsStarted = true;
+			await options.steps.applyPackages?.({
+				plan: options.plan,
+				sharedCommit: publishedCommit,
+				backupId: backupId as string,
+				signal: options.signal,
+			});
+			journal = await requireCurrentJournal(options.agentDirectory, options.plan.planId, "backup_verified");
+		}
+		journal = await advanceJournal({
+			agentDirectory: options.agentDirectory,
+			journal,
+			next: "packages_applied",
+			plan: options.plan,
+			completedPhase: "packages",
+			now: options.now,
+		});
+	} catch (error) {
+		return recoverApply(error, machineEffectsStarted);
+	}
+	await options.onJournalStage?.(journal);
+
+	try {
 		if (hasMachineFiles) {
 			machineEffectsStarted = true;
 			await options.steps.applyMachineFiles?.({
@@ -545,30 +796,6 @@ async function executeWithLock(options: {
 	await options.onJournalStage?.(journal);
 
 	try {
-		if (hasPackages) {
-			machineEffectsStarted = true;
-			await options.steps.applyPackages?.({
-				plan: options.plan,
-				sharedCommit: publishedCommit,
-				backupId: backupId as string,
-				signal: options.signal,
-			});
-			journal = await requireCurrentJournal(options.agentDirectory, options.plan.planId, "machine_files_applied");
-		}
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "packages_applied",
-			plan: options.plan,
-			completedPhase: "packages",
-			now: options.now,
-		});
-	} catch (error) {
-		return recoverApply(error, machineEffectsStarted);
-	}
-	await options.onJournalStage?.(journal);
-
-	try {
 		await options.steps.verifyFinalMachine({
 			plan: options.plan,
 			sharedCommit: publishedCommit,
@@ -583,6 +810,28 @@ async function executeWithLock(options: {
 		});
 	} catch (error) {
 		return recoverApply(error, machineEffectsStarted);
+	}
+	await options.onJournalStage?.(journal);
+
+	try {
+		await options.steps.restoreSecrets({
+			plan: options.plan,
+			sharedCommit: publishedCommit,
+			signal: options.signal,
+		});
+		journal = await advanceJournal({
+			agentDirectory: options.agentDirectory,
+			journal,
+			next: "secrets_restored",
+			plan: options.plan,
+			now: options.now,
+		});
+	} catch (error) {
+		throw new TransactionRecoveryRequiredError("Agent secret restore failed after managed file verification.", {
+			publishedCommit,
+			backupId,
+			cause: error,
+		});
 	}
 	await options.onJournalStage?.(journal);
 

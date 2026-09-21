@@ -298,7 +298,7 @@ function hash(bytes: Uint8Array): string {
 }
 
 function comparisonBytes(path: string, exactBytes: Buffer): Buffer {
-	if (path !== "settings.json") return exactBytes;
+	if (path !== "agent/settings.json") return exactBytes;
 	try {
 		const text = new TextDecoder("utf-8", { fatal: true }).decode(exactBytes);
 		const value: unknown = JSON.parse(text);

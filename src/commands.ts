@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -10,10 +11,16 @@ import {
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
-import { resolveScopePlan } from "./config.ts";
+import { createDefaultLocalPolicy, resolveScopePlan } from "./config.ts";
 import { buildConflictSummaries, collectConflictDecisions, createConflictMergeWorkspace } from "./conflicts.ts";
 import { executeConfirmedTransaction, type TransactionSteps } from "./coordinator.ts";
-import { buildInventorySet, type FileInventory, type InventoryFile, type InventorySet } from "./files.ts";
+import {
+	buildInventorySet,
+	discoverFileInventory,
+	type FileInventory,
+	type InventoryFile,
+	type InventorySet,
+} from "./files.ts";
 import {
 	createCandidateCommit,
 	diffFromLastNamedSnapshot,
@@ -43,10 +50,12 @@ import {
 	executeRestorePlan,
 	formatRecoveryNotice,
 	getActiveAgentDirectory,
+	type IncompleteJournal,
 	listMachineBackups,
 	requestRecoveryDecision,
 	reviewRestorePlan,
 } from "./recovery.ts";
+import { restoreAgentSecrets } from "./secrets.ts";
 import { createApplySettingsPlan, parseSettings } from "./settings.ts";
 import { loadConfig, loadPlanArtifact, loadState, savePlanArtifact, validateArtifact } from "./state.ts";
 import {
@@ -59,6 +68,7 @@ import {
 } from "./transaction.ts";
 import {
 	type ConfigDocument,
+	type FileFingerprint,
 	type PlanArtifact,
 	type SharedManifest,
 	SharedManifestSchema,
@@ -116,7 +126,9 @@ export class StatusGenerationGuard {
 
 interface PlanInputs {
 	agentDirectory: string;
+	piDirectory: string;
 	config: Readonly<ConfigDocument>;
+	manifest: Readonly<SharedManifest>;
 	state: Readonly<StateDocument>;
 	snapshot: Readonly<SharedSnapshot>;
 	inventory: Readonly<InventorySet>;
@@ -130,6 +142,9 @@ interface PlanInputs {
 }
 
 interface PreparedSync {
+	agentDirectory: string;
+	piDirectory: string;
+	manifest: Readonly<SharedManifest>;
 	blocked: boolean;
 	blockers: readonly string[];
 	config: Readonly<ConfigDocument>;
@@ -149,7 +164,7 @@ interface ParsedCommand {
 }
 
 const LOADED_RESOURCE_PATTERN =
-	/^(?:AGENTS\.md|SYSTEM\.md|keybindings\.json|settings\.json|extensions\/|prompts\/|skills\/|themes\/)/;
+	/^agent\/(?:AGENTS\.md|APPEND_SYSTEM\.md|SYSTEM\.md|keybindings\.json|models\.json|settings\.json|extensions\/|prompts\/|skills\/|themes\/)/;
 
 function sha256(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -170,7 +185,7 @@ function exactText(file: Readonly<InventoryFile> | undefined, fallback = "{}\n")
 function inventoryFile(path: string, text: string): Readonly<InventoryFile> {
 	const bytes = Buffer.from(text);
 	let comparison = bytes;
-	if (path === "settings.json") {
+	if (path === "agent/settings.json") {
 		const canonical = stableStringify(JSON.parse(text));
 		if (canonical === undefined) throw new Error("Cannot canonicalize settings.json.");
 		comparison = Buffer.from(canonical);
@@ -357,6 +372,7 @@ async function loadPlanInputs(options: {
 	remoteCheckedAt?: string;
 }): Promise<PlanInputs> {
 	const agentDirectory = getActiveAgentDirectory();
+	const piDirectory = dirname(agentDirectory);
 	options.reporter.update("PREPARING", "Reading configuration and baseline state");
 	const [config, state] = await Promise.all([loadConfig(agentDirectory), loadState(agentDirectory)]);
 	if (!config) throw new Error("Configuration is missing. Run /config-sync doctor.");
@@ -380,7 +396,7 @@ async function loadPlanInputs(options: {
 			manifest = await readSharedManifest(directory);
 			options.reporter.update("PLANNING", "Inventorying THIS MACHINE and SHARED REPOSITORY");
 			inventory = await buildInventorySet({
-				machineRoot: agentDirectory,
+				machineRoot: piDirectory,
 				sharedRoot: directory,
 				baseline: state.baseline,
 				managedPatterns: [...new Set([...config.policy.approvedScope, ...manifest.managedScope])],
@@ -399,7 +415,9 @@ async function loadPlanInputs(options: {
 	const scope = resolveScopePlan(allPaths, manifest.managedScope, config.policy);
 	return {
 		agentDirectory,
+		piDirectory,
 		config,
+		manifest,
 		state,
 		snapshot: fetched.snapshot,
 		inventory,
@@ -429,11 +447,11 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 	let packageFingerprint = stableHash([]);
 	const packageActions: PlanArtifactAction[] = [];
 	const settingsAction = resolvedActions.find(
-		(action) => action.path === "settings.json" && action.direction === "shared-to-machine",
+		(action) => action.path === "agent/settings.json" && action.direction === "shared-to-machine",
 	);
-	if (settingsAction && inputs.shared.files["settings.json"]) {
-		const machineText = exactText(inputs.machine.files["settings.json"]);
-		const sharedText = exactText(inputs.shared.files["settings.json"]);
+	if (settingsAction && inputs.shared.files["agent/settings.json"]) {
+		const machineText = exactText(inputs.machine.files["agent/settings.json"]);
+		const sharedText = exactText(inputs.shared.files["agent/settings.json"]);
 		const machineSettings = parseSettings(machineText, { source: "machine", policy: inputs.config.policy });
 		const sharedSettings = parseSettings(sharedText, { source: "shared", policy: inputs.config.policy });
 		const rawPackagePlan = planPackageChanges(machineSettings.packages, sharedSettings.packages);
@@ -456,8 +474,8 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 			packageDecisions,
 		});
 		plannedSettingsText = settingsPlan.finalSettingsText;
-		const finalSettingsFile = inventoryFile("settings.json", plannedSettingsText);
-		finalMachineTree["settings.json"] = finalSettingsFile;
+		const finalSettingsFile = inventoryFile("agent/settings.json", plannedSettingsText);
+		finalMachineTree["agent/settings.json"] = finalSettingsFile;
 		packageActions.push(...rawPackageActions);
 		packageFingerprint = packageSetFingerprint(
 			parseSettings(plannedSettingsText, { source: "machine", policy: inputs.config.policy }).packages,
@@ -467,14 +485,15 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 		fileArtifactAction(action, inputs.machine.files, inputs.shared.files, finalMachineTree, finalSharedTree),
 	);
 	const settingsArtifactAction = fileActions.find(
-		(action) => action.path === "settings.json" && action.direction === "shared-to-machine",
+		(action) => action.path === "agent/settings.json" && action.direction === "shared-to-machine",
 	);
 	if (settingsArtifactAction && plannedSettingsText) {
-		settingsArtifactAction.resultSha256 = finalMachineTree["settings.json"]?.sha256 ?? null;
-		settingsArtifactAction.finalResult = "settings.json on THIS MACHINE will match the reviewed preserved result.";
+		settingsArtifactAction.resultSha256 = finalMachineTree["agent/settings.json"]?.sha256 ?? null;
+		settingsArtifactAction.finalResult =
+			"agent/settings.json on THIS MACHINE will match the reviewed preserved result.";
 	}
 	if (!plannedSettingsText) {
-		const finalSettings = finalMachineTree["settings.json"];
+		const finalSettings = finalMachineTree["agent/settings.json"];
 		if (finalSettings) {
 			packageFingerprint = packageSetFingerprint(
 				parseSettings(exactText(finalSettings), { source: "machine", policy: inputs.config.policy }).packages,
@@ -509,7 +528,7 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 		mode,
 		noOpEffects: [],
 		packageFingerprint,
-		policyFingerprint: stableHash(inputs.config.policy),
+		policyFingerprint: stableHash({ bitwarden: inputs.manifest.bitwarden, local: inputs.config.policy }),
 		prohibitedEffects: [
 			{
 				code: "NO_UNREVIEWED_PATHS",
@@ -523,6 +542,9 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 		scopeExpansion: inputs.scopeExpansion.length > 0 ? inputs.scopeExpansion : null,
 	});
 	return {
+		agentDirectory: inputs.agentDirectory,
+		piDirectory: inputs.piDirectory,
+		manifest: inputs.manifest,
 		blocked: blockers.length > 0,
 		blockers: Object.freeze(blockers),
 		config: inputs.config,
@@ -537,10 +559,57 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 	};
 }
 
+function matchesFingerprint(file: Readonly<InventoryFile>, expected: Readonly<FileFingerprint>): boolean {
+	return (
+		file.sha256 === expected.sha256 &&
+		file.comparisonSha256 === expected.comparisonSha256 &&
+		file.executable === expected.executable
+	);
+}
+
+function materializePlanTree(
+	expected: Readonly<Record<string, Readonly<FileFingerprint>>>,
+	candidates: readonly Readonly<Record<string, Readonly<InventoryFile>>>[],
+): Readonly<Record<string, Readonly<InventoryFile>>> {
+	const files: Record<string, Readonly<InventoryFile>> = {};
+	for (const [path, fingerprint] of Object.entries(expected)) {
+		const file = candidates
+			.map((tree) => tree[path])
+			.find((candidate) => candidate && matchesFingerprint(candidate, fingerprint));
+		if (!file || file.exactBytesBase64 === undefined) {
+			throw new Error(`Cannot recover exact planned content for ${path}.`);
+		}
+		files[path] = file;
+	}
+	return Object.freeze(files);
+}
+
+function prepareResumeSync(current: Readonly<PreparedSync>, plan: Readonly<PlanArtifact>): PreparedSync {
+	const candidates = [current.machineTree, current.sharedTree, current.finalMachineTree, current.finalSharedTree];
+	const finalMachineTree = materializePlanTree(plan.finalMachineTree, candidates);
+	const finalSharedTree = materializePlanTree(plan.finalSharedTree, candidates);
+	const hasPackages = plan.actions.some((action) => action.risk === "package");
+	const settingsFile = finalMachineTree["agent/settings.json"];
+	if (hasPackages && (!settingsFile || settingsFile.exactBytesBase64 === undefined)) {
+		throw new Error("Cannot recover exact planned agent/settings.json content.");
+	}
+	return {
+		...current,
+		blocked: false,
+		blockers: Object.freeze([]),
+		finalMachineTree,
+		finalSharedTree,
+		plannedSettingsText: hasPackages
+			? Buffer.from(settingsFile?.exactBytesBase64 ?? "", "base64").toString("utf8")
+			: current.plannedSettingsText,
+		plan,
+	};
+}
+
 function decisionRequirements(prepared: Readonly<PreparedSync>): DecisionRequirement[] {
 	const requirements: DecisionRequirement[] = [];
 	for (const action of prepared.plan.actions) {
-		if (action.codeExecution) {
+		if (action.risk === "package") {
 			requirements.push({
 				category: "package",
 				id: packageActionDecisionId(action),
@@ -633,6 +702,7 @@ async function executePreparedSync(options: {
 	prepared: PreparedSync;
 	authorization: Readonly<{ planId: string }>;
 	reporter: ProgressReporter;
+	deferPackageSettings?: boolean;
 }): Promise<{ resourcesChanged: boolean }> {
 	let current = options.prepared;
 	let candidate: Awaited<ReturnType<typeof createCandidateCommit>> | undefined;
@@ -653,7 +723,10 @@ async function executePreparedSync(options: {
 			currentMachineTree: current.machineTree,
 			committedFinalMachineTree: current.finalMachineTree,
 			baseline: current.state.baseline,
-			deferredPaths: current.plan.actions.some((action) => action.codeExecution) ? ["settings.json"] : [],
+			deferredPaths:
+				options.deferPackageSettings !== false && current.plan.actions.some((action) => action.risk === "package")
+					? ["agent/settings.json"]
+					: [],
 		});
 		return applySet;
 	};
@@ -673,8 +746,8 @@ async function executePreparedSync(options: {
 				validation: {
 					managedPatterns: current.plan.effectivePaths,
 					machineSettings: {
-						currentText: exactText(current.machineTree["settings.json"]),
-						finalText: exactText(current.finalMachineTree["settings.json"]),
+						currentText: exactText(current.machineTree["agent/settings.json"]),
+						finalText: exactText(current.finalMachineTree["agent/settings.json"]),
 					},
 					policy: current.config.policy,
 				},
@@ -694,8 +767,8 @@ async function executePreparedSync(options: {
 			options.reporter.update("BACKING UP", "Creating and verifying the THIS MACHINE backup");
 			const backupId = `backup-${Date.now()}-${options.prepared.plan.shortPlanId}`;
 			await createVerifiedMachineBackup({
-				agentDirectory: getActiveAgentDirectory(),
-				machineRoot: getActiveAgentDirectory(),
+				agentDirectory: current.agentDirectory,
+				machineRoot: current.piDirectory,
 				backupId,
 				createdAt: new Date().toISOString(),
 				applySet: ensureApplySet(),
@@ -706,8 +779,8 @@ async function executePreparedSync(options: {
 		applyMachineFiles: async ({ backupId, signal }) => {
 			options.reporter.update("APPLYING FILES", "Applying confirmed files on THIS MACHINE");
 			await applyMachineFilesFromBackup({
-				agentDirectory: getActiveAgentDirectory(),
-				machineRoot: getActiveAgentDirectory(),
+				agentDirectory: current.agentDirectory,
+				machineRoot: current.piDirectory,
 				backupId,
 				applySet: ensureApplySet(),
 				signal,
@@ -719,7 +792,8 @@ async function executePreparedSync(options: {
 			await executeConfirmedPackagePlan({
 				exec: options.pi.exec,
 				cwd: options.ctx.cwd,
-				agentDirectory: getActiveAgentDirectory(),
+				agentDirectory: current.agentDirectory,
+				machineRoot: current.piDirectory,
 				plan: options.prepared.plan,
 				authorization: options.authorization,
 				plannedSettingsText: current.plannedSettingsText,
@@ -729,14 +803,23 @@ async function executePreparedSync(options: {
 		},
 		verifyFinalMachine: async () => {
 			options.reporter.update("VERIFYING", "Verifying the final THIS MACHINE tree");
-			await verifyMachineApplySet({ machineRoot: getActiveAgentDirectory(), applySet: ensureApplySet() });
+			await verifyMachineApplySet({ machineRoot: current.piDirectory, applySet: ensureApplySet() });
+		},
+		restoreSecrets: async ({ signal }) => {
+			options.reporter.update("RESTORING SECRETS", "Restoring agent secrets from Bitwarden");
+			await restoreAgentSecrets({
+				exec: options.pi.exec,
+				manifest: current.manifest.bitwarden,
+				piDirectory: current.piDirectory,
+				signal,
+			});
 		},
 		restoreMachine: async ({ backupId }) => {
 			options.reporter.update("RECOVERING", "Restoring THIS MACHINE from the verified backup");
 			try {
 				await restoreVerifiedMachineBackup({
-					agentDirectory: getActiveAgentDirectory(),
-					machineRoot: getActiveAgentDirectory(),
+					agentDirectory: current.agentDirectory,
+					machineRoot: current.piDirectory,
 					backupId,
 					expectedPlanId: options.prepared.plan.planId,
 				});
@@ -753,7 +836,7 @@ async function executePreparedSync(options: {
 		},
 	};
 	const result = await executeConfirmedTransaction({
-		agentDirectory: getActiveAgentDirectory(),
+		agentDirectory: options.prepared.agentDirectory,
 		plan: options.prepared.plan,
 		authorization: options.authorization,
 		steps,
@@ -761,9 +844,12 @@ async function executePreparedSync(options: {
 		onJournalStage: ({ stage }) => {
 			if (stage === "candidate_created") options.reporter.update("VALIDATING", "Candidate commit recorded");
 			else if (stage === "shared_published") options.reporter.update("BACKING UP", "Shared commit recorded");
-			else if (stage === "backup_verified") options.reporter.update("APPLYING FILES", "Verified backup recorded");
-			else if (stage === "machine_files_applied") options.reporter.update("APPLYING PACKAGES", "File APPLY recorded");
-			else if (stage === "packages_applied") options.reporter.update("VERIFYING", "Package APPLY recorded");
+			else if (stage === "backup_verified") options.reporter.update("APPLYING PACKAGES", "Verified backup recorded");
+			else if (stage === "packages_applied") options.reporter.update("APPLYING FILES", "Package APPLY recorded");
+			else if (stage === "machine_files_applied") options.reporter.update("VERIFYING", "File APPLY recorded");
+			else if (stage === "final_verified") {
+				options.reporter.update("RESTORING SECRETS", "Managed file verification recorded");
+			}
 		},
 	});
 	options.reporter.update("COMPLETE", "Configuration synchronization completed");
@@ -899,9 +985,11 @@ async function runRestoreCommand(options: {
 	const resourcesChanged = await runWithProgress({
 		ctx: options.ctx,
 		operation: async (reporter): Promise<boolean> => {
+			const agentDirectory = getActiveAgentDirectory();
+			const piDirectory = dirname(agentDirectory);
 			let backupId = options.backupId;
 			if (!backupId) {
-				const backups = await listMachineBackups(getActiveAgentDirectory());
+				const backups = await listMachineBackups(agentDirectory);
 				const validIds = backups.filter((backup) => backup.status === "valid").map((backup) => backup.backupId);
 				if (!options.ctx.hasUI) {
 					appendResult(options.pi, { backups, kind: "backup_list" });
@@ -912,8 +1000,8 @@ async function runRestoreCommand(options: {
 			}
 			reporter.update("RESTORING", "Building the immutable restore plan");
 			const plan = await buildRestorePlan({
-				agentDirectory: getActiveAgentDirectory(),
-				machineRoot: getActiveAgentDirectory(),
+				agentDirectory,
+				machineRoot: piDirectory,
 				backupId,
 				createdAt: new Date().toISOString(),
 				signal: reporter.signal,
@@ -930,8 +1018,8 @@ async function runRestoreCommand(options: {
 				return false;
 			}
 			const result = await executeRestorePlan({
-				agentDirectory: getActiveAgentDirectory(),
-				machineRoot: getActiveAgentDirectory(),
+				agentDirectory,
+				machineRoot: piDirectory,
 				plan,
 				authorization,
 				signal: reporter.signal,
@@ -990,10 +1078,59 @@ async function runMigration(
 				signal: reporter.signal,
 			});
 			if (fresh.migrationId !== preview.migrationId) throw new Error("PLAN EXPIRED: Legacy migration inputs changed.");
+			if (!fresh.repositoryPath || !fresh.branch || !fresh.baseline) {
+				throw new Error("The migration preview has no complete legacy repository state.");
+			}
+			reporter.update("FETCHING", "Fetching the exact legacy SHARED REPOSITORY head");
+			const fetched = await fetchSharedSnapshot({
+				exec: pi.exec,
+				agentDirectory: getActiveAgentDirectory(),
+				repository: { branch: fresh.branch, repositoryPath: fresh.repositoryPath },
+				signal: reporter.signal,
+			});
+			if (fetched.status === "doctor") throw new Error(fetched.doctor.message);
+			if (fetched.snapshot.sharedCommit !== fresh.baseline.commit) {
+				throw new Error("PLAN EXPIRED: Legacy SHARED REPOSITORY changed after migration review.");
+			}
+			let currentSharedTree: Readonly<Record<string, Readonly<InventoryFile>>> | undefined;
+			await withSharedSnapshotWorktree({
+				exec: pi.exec,
+				snapshot: fetched.snapshot,
+				signal: reporter.signal,
+				run: async (directory) => {
+					currentSharedTree = (
+						await discoverFileInventory(directory, "shared", {
+							managedPatterns: [SHARED_MANIFEST_PATH, "sync/**"],
+							signal: reporter.signal,
+						})
+					).files;
+				},
+			});
+			if (!currentSharedTree) throw new Error("Legacy SHARED REPOSITORY inventory is unavailable.");
+			reporter.update("VALIDATING", "Validating the reviewed Pi-root migration candidate");
+			const migrationPolicy = { ...createDefaultLocalPolicy(), machineOnlySettings: [] };
+			const candidate = await createCandidateCommit({
+				exec: pi.exec,
+				snapshot: fetched.snapshot,
+				planId: fresh.migrationId,
+				currentSharedTree,
+				finalSharedTree: fresh.finalSharedTree,
+				validation: {
+					managedPatterns: Object.keys(fresh.finalSharedTree),
+					policy: migrationPolicy,
+				},
+				signal: reporter.signal,
+			});
+			reporter.update("PUBLISHING", "Publishing the reviewed Pi-root migration candidate");
+			const publication = await publishCandidateCommit({ exec: pi.exec, candidate, signal: reporter.signal });
+			if (publication.status === "plan_expired") {
+				throw new Error("PLAN EXPIRED: Legacy SHARED REPOSITORY changed before migration publish.");
+			}
 			const result = await importLegacyMigration({
 				agentDirectory: getActiveAgentDirectory(),
-				preview,
+				preview: fresh,
 				authorization,
+				publishedCommit: publication.publishedCommit,
 			});
 			appendResult(pi, {
 				completedAt: new Date().toISOString(),
@@ -1068,6 +1205,47 @@ async function runDiff(pi: ExtensionAPI, ctx: ExtensionCommandContext, path?: st
 	});
 }
 
+async function runResumeCommand(options: {
+	pi: ExtensionAPI;
+	ctx: ExtensionCommandContext;
+	recovery: Readonly<IncompleteJournal>;
+}): Promise<boolean> {
+	const resourcesChanged = await runWithProgress({
+		ctx: options.ctx,
+		operation: async (reporter): Promise<boolean> => {
+			const agentDirectory = getActiveAgentDirectory();
+			const plan = await loadPlanArtifact(agentDirectory, options.recovery.planId);
+			if (!plan) throw new Error("The recorded recovery plan is unavailable.");
+			const inputs = await loadPlanInputs({
+				pi: options.pi,
+				mode: plan.mode,
+				reporter,
+				now: () => new Date().toISOString(),
+				createdAt: plan.createdAt,
+				remoteCheckedAt: plan.remoteCheckedAt,
+			});
+			if (options.recovery.publishedCommit && inputs.snapshot.sharedCommit !== options.recovery.publishedCommit) {
+				throw new Error("PLAN EXPIRED: SHARED REPOSITORY changed after the interrupted operation.");
+			}
+			const current = buildPreparedSync(inputs, plan.mode, plan.decisions);
+			const prepared = prepareResumeSync(current, plan);
+			reporter.update("RECOVERING", `Resuming plan ${plan.shortPlanId} from ${options.recovery.stage}`);
+			const execution = await executePreparedSync({
+				pi: options.pi,
+				ctx: options.ctx,
+				mode: plan.mode,
+				decisions: plan.decisions,
+				prepared,
+				authorization: authorizePlanExecution(plan, plan.planId),
+				reporter,
+				deferPackageSettings: options.recovery.stage === "backup_verified",
+			});
+			return execution.resourcesChanged;
+		},
+	});
+	return shouldReload(options.ctx, resourcesChanged);
+}
+
 async function runRecovery(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
 	const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
 	const result = await requestRecoveryDecision({ ctx, recovery });
@@ -1083,11 +1261,7 @@ async function runRecovery(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
 		if (!result.recovery.backupId) throw new Error("The recorded operation has no verified backup to restore.");
 		return runRestoreCommand({ pi, ctx, backupId: result.recovery.backupId });
 	}
-	ctx.ui.notify(
-		`RESUME selected for plan ${result.recovery.planId}. Next recorded step: ${result.recovery.nextStep}.`,
-		"info",
-	);
-	return false;
+	return runResumeCommand({ pi, ctx, recovery: result.recovery });
 }
 
 async function updateFooterStatus(options: {

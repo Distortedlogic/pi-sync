@@ -23,6 +23,23 @@ import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from 
 
 const execFileAsync = promisify(execFile);
 const PLAN_ID = "1".repeat(64);
+const BITWARDEN_MANIFEST = {
+	projectId: "bdf0f162-017c-4811-a0f4-b48e010f6287",
+	environment: {
+		ALIBABA_TOKEN_PLAN_API_KEY: "alibaba-token-plan-api-key",
+		EXA_API_KEY: "exa-api-key",
+		FORGEJO_TOKEN: "forgejo-token",
+		GEMINI_API_KEY: "gemini-api-key",
+		KIMI_API_KEY: "kimi-api-key",
+		LANGFUSE_BASE_URL: "langfuse-base-url",
+		LANGFUSE_PUBLIC_KEY: "langfuse-public-key",
+		LANGFUSE_SECRET_KEY: "langfuse-secret-key",
+		PERPLEXITY_API_KEY: "perplexity-api-key",
+		PINCHTAB_TOKEN: "pinchtab-token",
+		SKILLSMP_API_KEY: "skillsmp-api-key",
+	},
+	authJsonKey: "pi-auth-json",
+} as const;
 interface GitCall {
 	command: string;
 	args: string[];
@@ -58,15 +75,16 @@ async function seedRepository(repositoryPath: string, parent: string): Promise<s
 	await execFileAsync("git", ["clone", repositoryPath, seed]);
 	await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: seed });
 	await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: seed });
+	await mkdir(join(seed, "agent"));
 	await Promise.all([
-		writeFile(join(seed, "settings.json"), '{"theme":"dark"}\n', "utf8"),
+		writeFile(join(seed, "agent", "settings.json"), '{"theme":"dark"}\n', "utf8"),
 		writeFile(
 			join(seed, SHARED_MANIFEST_PATH),
-			`${JSON.stringify({ managedScope: ["settings.json"], schemaVersion: 1 })}\n`,
+			`${JSON.stringify({ bitwarden: BITWARDEN_MANIFEST, managedScope: ["agent/settings.json"], schemaVersion: 1 })}\n`,
 			"utf8",
 		),
 	]);
-	await execFileAsync("git", ["add", "settings.json", SHARED_MANIFEST_PATH], { cwd: seed });
+	await execFileAsync("git", ["add", "agent/settings.json", SHARED_MANIFEST_PATH], { cwd: seed });
 	await execFileAsync("git", ["commit", "-m", "Seed"], { cwd: seed });
 	await execFileAsync("git", ["push", "origin", "HEAD:main"], { cwd: seed });
 	const result = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: seed });
@@ -75,9 +93,9 @@ async function seedRepository(repositoryPath: string, parent: string): Promise<s
 
 function file(path: string, content: string): Readonly<InventoryFile> {
 	const bytes = Buffer.from(content, "utf8");
-	const canonical = path === "settings.json" ? stableStringify(JSON.parse(content)) : content;
+	const canonical = path === "agent/settings.json" ? stableStringify(JSON.parse(content)) : content;
 	if (canonical === undefined) throw new Error("Cannot create test file.");
-	const comparisonBytes = path === "settings.json" ? Buffer.from(canonical) : bytes;
+	const comparisonBytes = path === "agent/settings.json" ? Buffer.from(canonical) : bytes;
 	const sha256 = createHash("sha256").update(bytes).digest("hex");
 	return Object.freeze({
 		path,
@@ -116,7 +134,10 @@ describe("Git snapshots and candidates", () => {
 			if (fetched.status !== "ready") return;
 			assert.equal(fetched.snapshot.sharedCommit, seededCommit);
 			const current = await discoverFileInventory(fetched.snapshot.workspace.repositoryDirectory, "shared");
-			const finalTree = { ...current.files, "settings.json": file("settings.json", '{"theme":"light"}\n') };
+			const finalTree = {
+				...current.files,
+				"agent/settings.json": file("agent/settings.json", '{"theme":"light"}\n'),
+			};
 			const candidate = await createCandidateCommit({
 				exec,
 				snapshot: fetched.snapshot,
@@ -129,7 +150,7 @@ describe("Git snapshots and candidates", () => {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
 			assert.deepEqual(revision.stdout.trim().split(" "), [candidate.candidateCommit, seededCommit]);
-			const content = await execFileAsync("git", ["show", `${candidate.candidateCommit}:settings.json`], {
+			const content = await execFileAsync("git", ["show", `${candidate.candidateCommit}:agent/settings.json`], {
 				cwd: candidate.workspace.repositoryDirectory,
 			});
 			assert.equal(content.stdout, '{"theme":"light"}\n');
@@ -139,7 +160,7 @@ describe("Git snapshots and candidates", () => {
 				exec,
 				workspace: candidate.workspace,
 				targetCommit: candidate.candidateCommit,
-				path: "settings.json",
+				path: "agent/settings.json",
 			});
 			assert.equal(focusedDiff.baseCommit, seededCommit);
 			assert.ok(focusedDiff.diff.includes("settings.json"));
@@ -170,7 +191,11 @@ describe("setup repository inspection", () => {
 				repository,
 			});
 			assert.equal(inspected.empty, false);
-			assert.deepEqual(inspected.manifest, { managedScope: ["settings.json"], schemaVersion: 1 });
+			assert.deepEqual(inspected.manifest, {
+				bitwarden: BITWARDEN_MANIFEST,
+				managedScope: ["agent/settings.json"],
+				schemaVersion: 1,
+			});
 			assert.equal(inspected.sharedCommit, sharedCommit);
 			assert.equal(inspected.privacyNotice, "SHARED REPOSITORY privacy could not be verified.");
 		} finally {
@@ -219,7 +244,10 @@ describe("PUBLISH revalidation", () => {
 				snapshot: fetched.snapshot,
 				planId: PLAN_ID,
 				currentSharedTree: current.files,
-				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
+				finalSharedTree: {
+					...current.files,
+					"agent/settings.json": file("agent/settings.json", "{}\n"),
+				},
 			});
 			const concurrentCommit = await advanceSharedRepository(shared.path, agent.path);
 			const result = await publishCandidateCommit({ exec, candidate });
@@ -255,7 +283,10 @@ describe("PUBLISH revalidation", () => {
 				snapshot: fetched.snapshot,
 				planId: PLAN_ID,
 				currentSharedTree: current.files,
-				finalSharedTree: { ...current.files, "settings.json": file("settings.json", "{}\n") },
+				finalSharedTree: {
+					...current.files,
+					"agent/settings.json": file("agent/settings.json", "{}\n"),
+				},
 			});
 			const result = await publishCandidateCommit({ exec, candidate });
 			assert.deepEqual(result, { status: "published", publishedCommit: candidate.candidateCommit });

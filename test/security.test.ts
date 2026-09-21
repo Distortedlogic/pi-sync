@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it, mock } from "node:test";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import { discoverFileInventory } from "../src/files.ts";
+import { restoreAgentSecrets } from "../src/secrets.ts";
 import {
 	SecretFindingError,
 	type SecretScannerFactory,
@@ -35,6 +36,119 @@ async function validationInput(
 	};
 }
 
+describe("Bitwarden agent secret restore", () => {
+	const manifest = {
+		projectId: "bdf0f162-017c-4811-a0f4-b48e010f6287" as const,
+		environment: {
+			ZETA_TOKEN: "zeta-token",
+			TEST_TOKEN: "test-token",
+			ALPHA_TOKEN: "alpha-token",
+		},
+		authJsonKey: "pi-auth-json",
+	};
+
+	it("writes only mapped values after complete validation with mode 0600", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const previousToken = process.env.BWS_ACCESS_TOKEN;
+		process.env.BWS_ACCESS_TOKEN = "test-bootstrap-token";
+		try {
+			await restoreAgentSecrets({
+				exec: async (command, args) => {
+					assert.equal(command, "bws");
+					assert.deepEqual(args, ["secret", "list", manifest.projectId, "--output", "json"]);
+					return {
+						stdout: JSON.stringify([
+							{ key: "zeta-token", value: "zeta-value" },
+							{ key: "pi-auth-json", value: '{"providers":{}}' },
+							{ key: "test-token", value: "mapped-value" },
+							{ key: "alpha-token", value: "alpha-value" },
+							{ key: "unmapped", value: "must-not-be-written" },
+						]),
+						stderr: "",
+						code: 0,
+						killed: false,
+					};
+				},
+				manifest,
+				piDirectory: temporary.path,
+			});
+			const environmentPath = join(temporary.path, "agent", ".env");
+			const authPath = join(temporary.path, "agent", "auth.json");
+			assert.equal(
+				await readFile(environmentPath, "utf8"),
+				'ALPHA_TOKEN="alpha-value"\nTEST_TOKEN="mapped-value"\nZETA_TOKEN="zeta-value"\n',
+			);
+			assert.equal(await readFile(authPath, "utf8"), '{"providers":{}}\n');
+			assert.equal((await stat(environmentPath)).mode & 0o777, 0o600);
+			assert.equal((await stat(authPath)).mode & 0o777, 0o600);
+		} finally {
+			if (previousToken === undefined) delete process.env.BWS_ACCESS_TOKEN;
+			else process.env.BWS_ACCESS_TOKEN = previousToken;
+			await temporary.cleanup();
+		}
+	});
+
+	it("writes neither file when the authentication document is invalid", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const previousToken = process.env.BWS_ACCESS_TOKEN;
+		process.env.BWS_ACCESS_TOKEN = "test-bootstrap-token";
+		try {
+			await assert.rejects(
+				restoreAgentSecrets({
+					exec: async () => ({
+						stdout: JSON.stringify([
+							{ key: "test-token", value: "mapped-value" },
+							{ key: "alpha-token", value: "alpha-value" },
+							{ key: "zeta-token", value: "zeta-value" },
+							{ key: "pi-auth-json", value: "invalid-json" },
+						]),
+						stderr: "",
+						code: 0,
+						killed: false,
+					}),
+					manifest,
+					piDirectory: temporary.path,
+				}),
+				/invalid authentication document/,
+			);
+			await assert.rejects(readFile(join(temporary.path, "agent", ".env")), /ENOENT/);
+			await assert.rejects(readFile(join(temporary.path, "agent", "auth.json")), /ENOENT/);
+		} finally {
+			if (previousToken === undefined) delete process.env.BWS_ACCESS_TOKEN;
+			else process.env.BWS_ACCESS_TOKEN = previousToken;
+			await temporary.cleanup();
+		}
+	});
+
+	it("redacts Bitwarden command failures and writes no secret files", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const previousToken = process.env.BWS_ACCESS_TOKEN;
+		const sensitiveOutput = "sensitive-command-output";
+		process.env.BWS_ACCESS_TOKEN = "test-bootstrap-token";
+		try {
+			await assert.rejects(
+				restoreAgentSecrets({
+					exec: async () => ({
+						stdout: sensitiveOutput,
+						stderr: sensitiveOutput,
+						code: 1,
+						killed: false,
+					}),
+					manifest,
+					piDirectory: temporary.path,
+				}),
+				(error: unknown) => error instanceof Error && !error.message.includes(sensitiveOutput),
+			);
+			await assert.rejects(readFile(join(temporary.path, "agent", ".env")), /ENOENT/);
+			await assert.rejects(readFile(join(temporary.path, "agent", "auth.json")), /ENOENT/);
+		} finally {
+			if (previousToken === undefined) delete process.env.BWS_ACCESS_TOKEN;
+			else process.env.BWS_ACCESS_TOKEN = previousToken;
+			await temporary.cleanup();
+		}
+	});
+});
+
 describe("staged final-tree validation", () => {
 	it("rejects a permanently denied staged path before candidate creation", async () => {
 		const temporary = await createTemporaryAgentDirectory();
@@ -56,12 +170,13 @@ describe("staged final-tree validation", () => {
 	it("rejects a full-tree fingerprint mismatch", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		try {
-			await writeFile(join(temporary.path, "settings.json"), "{}\n", "utf8");
+			await mkdir(join(temporary.path, "agent"));
+			await writeFile(join(temporary.path, "agent", "settings.json"), "{}\n", "utf8");
 			const input = await validationInput(temporary.path);
 			const expected = {
 				...input.plannedFinalSharedTree,
-				"settings.json": {
-					...input.plannedFinalSharedTree["settings.json"],
+				"agent/settings.json": {
+					...input.plannedFinalSharedTree["agent/settings.json"],
 					sha256: "f".repeat(64),
 				},
 			};
@@ -94,10 +209,15 @@ describe("staged final-tree validation", () => {
 		const invalidPackage = await createTemporaryAgentDirectory();
 		const lostPolicy = await createTemporaryAgentDirectory();
 		try {
-			await writeFile(join(invalidPackage.path, "settings.json"), '{"packages":["npm:example@latest"]}', "utf8");
+			await Promise.all([mkdir(join(invalidPackage.path, "agent")), mkdir(join(lostPolicy.path, "agent"))]);
+			await writeFile(
+				join(invalidPackage.path, "agent", "settings.json"),
+				'{"packages":["npm:example@latest"]}',
+				"utf8",
+			);
 			await assert.rejects(validateStagedCandidate(await validationInput(invalidPackage.path)), /not pinned/);
 
-			await writeFile(join(lostPolicy.path, "settings.json"), "{}", "utf8");
+			await writeFile(join(lostPolicy.path, "agent", "settings.json"), "{}", "utf8");
 			const policy = { ...createDefaultLocalPolicy(), machineOnlySettings: ["/machine/value"] };
 			const input = await validationInput(lostPolicy.path, {
 				policy,

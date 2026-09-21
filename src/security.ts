@@ -264,7 +264,7 @@ export async function validateStagedCandidate(
 		if (path.endsWith(".json")) {
 			if (text === undefined) throw new CandidateValidationError(`Managed JSON is not UTF-8 text: ${path}`);
 			validateJson(path, text);
-			if (path === "settings.json") parseSettings(text, { source: "shared", policy: options.policy });
+			if (path === "agent/settings.json") parseSettings(text, { source: "shared", policy: options.policy });
 		}
 		scanInputs.push({ path, content: text ?? bytes.toString("utf8") });
 	}

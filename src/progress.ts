@@ -11,6 +11,7 @@ export type ProgressPhase =
 	| "APPLYING FILES"
 	| "APPLYING PACKAGES"
 	| "VERIFYING"
+	| "RESTORING SECRETS"
 	| "RECOVERING"
 	| "RESTORING"
 	| "COMPLETE";

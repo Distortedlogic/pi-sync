@@ -25,9 +25,9 @@ describe("managed path safety", () => {
 			}
 
 			const roots = await createRoots(temporary.path);
-			await mkdir(join(roots.machine, "extensions", "nested", ".git"), { recursive: true });
+			await mkdir(join(roots.machine, "agent", "extensions", "nested", ".git"), { recursive: true });
 			await assert.rejects(
-				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["extensions/**"] }),
+				discoverFileInventory(roots.machine, "machine", { managedPatterns: ["agent/extensions/**"] }),
 				/Nested Git repository/,
 			);
 
@@ -37,9 +37,9 @@ describe("managed path safety", () => {
 				await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /path component is a symlink/);
 
 				const symlinkMachine = join(temporary.path, "symlink-machine");
-				await mkdir(symlinkMachine);
+				await mkdir(join(symlinkMachine, "agent"), { recursive: true });
 				await writeFile(join(roots.shared, "target.json"), "{}", "utf8");
-				await symlink(join(roots.shared, "target.json"), join(symlinkMachine, "settings.json"));
+				await symlink(join(roots.shared, "target.json"), join(symlinkMachine, "agent", "settings.json"));
 				await assert.rejects(discoverFileInventory(symlinkMachine, "machine"), /Managed path is a symlink/);
 			}
 		} finally {
@@ -55,9 +55,10 @@ describe("file inventory", () => {
 			const roots = await createRoots(temporary.path);
 			const machineBytes = Buffer.from('{"theme":"dark","packages":[]}\n');
 			const sharedBytes = Buffer.from('{\n  "packages": [],\n  "theme": "dark"\n}\n');
+			await Promise.all([mkdir(join(roots.machine, "agent")), mkdir(join(roots.shared, "agent"))]);
 			await Promise.all([
-				writeFile(join(roots.machine, "settings.json"), machineBytes),
-				writeFile(join(roots.shared, "settings.json"), sharedBytes),
+				writeFile(join(roots.machine, "agent", "settings.json"), machineBytes),
+				writeFile(join(roots.shared, "agent", "settings.json"), sharedBytes),
 			]);
 
 			const inventories = await buildInventorySet({
@@ -65,8 +66,8 @@ describe("file inventory", () => {
 				sharedRoot: roots.shared,
 				baseline: null,
 			});
-			const machine = inventories.machine.files["settings.json"];
-			const shared = inventories.shared.files["settings.json"];
+			const machine = inventories.machine.files["agent/settings.json"];
+			const shared = inventories.shared.files["agent/settings.json"];
 			assert.notEqual(machine?.sha256, shared?.sha256);
 			assert.equal(machine?.comparisonSha256, shared?.comparisonSha256);
 			assert.deepEqual(Buffer.from(machine?.exactBytesBase64 ?? "", "base64"), machineBytes);

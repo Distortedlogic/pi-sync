@@ -86,7 +86,7 @@ function validatePackageAction(action: Readonly<ConfirmedPackageAction>): void {
 }
 
 function confirmedPackageActions(plan: Readonly<PlanArtifact>): readonly Readonly<ConfirmedPackageAction>[] {
-	const actions = plan.actions.filter((action) => action.codeExecution);
+	const actions = plan.actions.filter((action) => action.risk === "package");
 	for (const action of actions) validatePackageAction(action);
 	return Object.freeze(
 		[...actions].sort(
@@ -141,16 +141,18 @@ function validateExactSources(options: {
 	currentSettingsText: string;
 	plannedSettingsText: string;
 	policy: LocalPolicy;
+	allowAlreadyPlanned?: boolean;
 }): void {
 	const current = parseSettings(options.currentSettingsText, { source: "machine", policy: options.policy });
 	const planned = parseSettings(options.plannedSettingsText, { source: "machine", policy: options.policy });
 	if (packageSetFingerprint(planned.packages) !== options.plan.packageFingerprint) {
 		throw new PackageExecutionError("Planned package sources do not match the confirmed plan.");
 	}
-	const plannedSettings = options.plan.finalMachineTree["settings.json"];
+	const plannedSettings = options.plan.finalMachineTree["agent/settings.json"];
 	if (!plannedSettings || plannedSettings.sha256 !== hash(options.plannedSettingsText)) {
 		throw new PackageExecutionError("Exact planned settings do not match the confirmed plan.");
 	}
+	if (options.allowAlreadyPlanned && hash(options.currentSettingsText) === hash(options.plannedSettingsText)) return;
 	const currentByIdentity = packageMap(current);
 	const plannedByIdentity = packageMap(planned);
 	for (const action of options.actions) {
@@ -181,7 +183,7 @@ function validateExactSources(options: {
 
 async function requireJournal(agentDirectory: string, planId: string): Promise<OperationJournal> {
 	const journal = await loadJournal(agentDirectory);
-	if (!journal || journal.planId !== planId || journal.stage !== "machine_files_applied") {
+	if (!journal || journal.planId !== planId || journal.stage !== "backup_verified") {
 		throw new PackageExecutionError("Operation journal is not ready for the confirmed package plan.");
 	}
 	return journal;
@@ -304,6 +306,7 @@ export async function executeConfirmedPackagePlan(options: {
 	exec: PackageExec;
 	cwd: string;
 	agentDirectory: string;
+	machineRoot: string;
 	plan: Readonly<PlanArtifact>;
 	authorization: Readonly<PlanExecutionAuthorization>;
 	plannedSettingsText: string;
@@ -323,22 +326,40 @@ export async function executeConfirmedPackagePlan(options: {
 	if (!Number.isSafeInteger(timeout) || timeout < 1)
 		throw new PackageExecutionError("Package command timeout is invalid.");
 	const operations = options.operations ?? createMachineApplyOperations();
-	const settingsPath = resolve(options.agentDirectory, "settings.json");
+	const settingsPath = resolve(options.machineRoot, "agent/settings.json");
 	const original = await readOriginalSettings(operations, settingsPath);
 	const originalSettingsText = original.content.toString("utf8");
+	let journal = await requireJournal(options.agentDirectory, options.plan.planId);
+	const now = options.now ?? (() => new Date().toISOString());
+	const latestStatus = new Map<string, NonNullable<OperationJournal["packageEvents"]>[number]["status"]>();
+	for (const event of journal.packageEvents ?? []) latestStatus.set(event.actionId, event.status);
+	for (const status of latestStatus.values()) {
+		if (status === "started" || status === "rollback_started" || status === "rollback_failed") {
+			throw new PackageExecutionError("A recorded package action has an unknown final state.");
+		}
+	}
+	const allActionsRecorded = actions.every((action) => {
+		const status = latestStatus.get(packageActionDecisionId(action));
+		return status === "completed" || status === "best_effort_failed";
+	});
 	validateExactSources({
 		plan: options.plan,
 		actions,
 		currentSettingsText: originalSettingsText,
 		plannedSettingsText: options.plannedSettingsText,
 		policy: options.policy,
+		allowAlreadyPlanned: allActionsRecorded,
 	});
-	let journal = await requireJournal(options.agentDirectory, options.plan.planId);
-	const now = options.now ?? (() => new Date().toISOString());
-	const completed: Readonly<ConfirmedPackageAction>[] = [];
-	const bestEffortFailureIds: string[] = [];
+	const completed: Readonly<ConfirmedPackageAction>[] = actions.filter(
+		(action) => latestStatus.get(packageActionDecisionId(action)) === "completed",
+	);
+	const bestEffortFailureIds = actions
+		.filter((action) => latestStatus.get(packageActionDecisionId(action)) === "best_effort_failed")
+		.map(packageActionDecisionId);
 	try {
 		for (const action of actions) {
+			const previousStatus = latestStatus.get(packageActionDecisionId(action));
+			if (previousStatus === "completed" || previousStatus === "best_effort_failed") continue;
 			options.signal?.throwIfAborted();
 			journal = await appendJournalEvent({
 				agentDirectory: options.agentDirectory,

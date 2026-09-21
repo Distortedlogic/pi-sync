@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { describe, it } from "node:test";
 import type { InventoryFile } from "../src/files.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
 import { getBackupMetadataPath } from "../src/state.ts";
 import {
+	applyMachineFilesFromBackup,
 	applyMachinePlan,
 	buildMachineApplySet,
 	createMachineApplyOperations,
+	createVerifiedMachineBackup,
 	MachineApplyError,
 	type MachineApplyOperations,
 	verifyBackup,
@@ -111,7 +113,9 @@ function plan(
 async function writeTree(root: string, tree: Readonly<Record<string, Readonly<InventoryFile>>>): Promise<void> {
 	await mkdir(root, { recursive: true });
 	for (const [path, entry] of Object.entries(tree)) {
-		await writeFile(join(root, path), Buffer.from(entry.exactBytesBase64 ?? "", "base64"));
+		const destination = join(root, path);
+		await mkdir(dirname(destination), { recursive: true });
+		await writeFile(destination, Buffer.from(entry.exactBytesBase64 ?? "", "base64"));
 	}
 }
 
@@ -149,14 +153,20 @@ describe("machine apply", () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const agentDirectory = join(temporary.path, "agent");
 		const machineRoot = join(temporary.path, "machine");
-		const current = { "a.txt": file("a.txt", "old-a"), "b.txt": file("b.txt", "old-b") };
-		const final = { "a.txt": file("a.txt", "new-a"), "c.txt": file("c.txt", "new-c") };
+		const current = {
+			"agent/a.txt": file("agent/a.txt", "old-a"),
+			"agent/b.txt": file("agent/b.txt", "old-b"),
+		};
+		const final = {
+			"agent/a.txt": file("agent/a.txt", "new-a"),
+			"agent/c.txt": file("agent/c.txt", "new-c"),
+		};
 		try {
 			await writeTree(machineRoot, current);
 			const selectedApplySet = applySet(current, final);
 			assert.deepEqual(
 				selectedApplySet.operations.map(({ kind, path }) => `${kind}:${path}`),
-				["write:a.txt", "delete:b.txt", "write:c.txt"],
+				["write:agent/a.txt", "delete:agent/b.txt", "write:agent/c.txt"],
 			);
 			const result = await applyMachinePlan({
 				agentDirectory,
@@ -167,20 +177,23 @@ describe("machine apply", () => {
 			});
 			assert.equal(result.status, "success");
 			assert.equal(result.backupId, "backup-complete");
-			assert.equal(await readFile(join(machineRoot, "a.txt"), "utf8"), "new-a");
+			assert.equal(await readFile(join(machineRoot, "agent", "a.txt"), "utf8"), "new-a");
 			await assert.rejects(
-				readFile(join(machineRoot, "b.txt"), "utf8"),
+				readFile(join(machineRoot, "agent", "b.txt"), "utf8"),
 				(error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
 			);
-			assert.equal(await readFile(join(machineRoot, "c.txt"), "utf8"), "new-c");
+			assert.equal(await readFile(join(machineRoot, "agent", "c.txt"), "utf8"), "new-c");
 			const metadata = await verifyBackup({ agentDirectory, backupId: "backup-complete" });
 			assert.deepEqual(metadata.entries, [
-				{ executable: false, existed: true, path: "a.txt", sha256: current["a.txt"].sha256 },
-				{ executable: false, existed: true, path: "b.txt", sha256: current["b.txt"].sha256 },
-				{ executable: null, existed: false, path: "c.txt", sha256: null },
+				{ executable: false, existed: true, path: "agent/a.txt", sha256: current["agent/a.txt"].sha256 },
+				{ executable: false, existed: true, path: "agent/b.txt", sha256: current["agent/b.txt"].sha256 },
+				{ executable: null, existed: false, path: "agent/c.txt", sha256: null },
 			]);
 			assert.equal(
-				await readFile(join(agentDirectory, ".config-sync", "backups", "backup-complete", "files", "a.txt"), "utf8"),
+				await readFile(
+					join(agentDirectory, ".config-sync", "backups", "backup-complete", "files", "agent", "a.txt"),
+					"utf8",
+				),
 				"old-a",
 			);
 		} finally {
@@ -188,8 +201,45 @@ describe("machine apply", () => {
 		}
 	});
 
+	it("gives the reviewed managed file precedence over a package-created file", async () => {
+		const temporary = await createTemporaryAgentDirectory();
+		const agentDirectory = join(temporary.path, "agent");
+		const machineRoot = join(temporary.path, "machine");
+		const path = "agent/extensions/generated/index.ts";
+		const current = {};
+		const final = { [path]: file(path, "reviewed") };
+		try {
+			await writeTree(machineRoot, current);
+			const selectedApplySet = applySet(current, final);
+			await createVerifiedMachineBackup({
+				agentDirectory,
+				machineRoot,
+				backupId: "backup-package-created",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				applySet: selectedApplySet,
+			});
+			await mkdir(join(machineRoot, "agent", "extensions", "generated"), { recursive: true });
+			await writeFile(join(machineRoot, path), "package-created");
+
+			await applyMachineFilesFromBackup({
+				agentDirectory,
+				machineRoot,
+				backupId: "backup-package-created",
+				applySet: selectedApplySet,
+				verifyFinal: true,
+			});
+
+			assert.equal(await readFile(join(machineRoot, path), "utf8"), "reviewed");
+			assert.deepEqual((await verifyBackup({ agentDirectory, backupId: "backup-package-created" })).entries, [
+				{ executable: null, existed: false, path, sha256: null },
+			]);
+		} finally {
+			await temporary.cleanup();
+		}
+	});
+
 	it("requires a confirmed action and valid baseline for every deletion", () => {
-		const current = { "a.txt": file("a.txt", "old") };
+		const current = { "agent/settings.json": file("agent/settings.json", "old") };
 		const final = {};
 		assert.throws(() => applySet(current, final, null), /does not permit the machine deletion/);
 		const artifact = plan(current, final);
