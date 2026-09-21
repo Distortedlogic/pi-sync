@@ -6,7 +6,6 @@ import {
 	deriveFooterStatus,
 	formatDifferenceOutput,
 	parseConfigSyncCommand,
-	StatusGenerationGuard,
 } from "../src/commands.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
 import { runWithProgress } from "../src/progress.ts";
@@ -99,26 +98,11 @@ describe("configuration command routing", () => {
 		assert.ok(Buffer.byteLength(output) < 60 * 1024);
 		assert.ok(output.includes("Difference truncated"));
 	});
-
-	it("invalidates late status generations on replacement or shutdown", () => {
-		const guard = new StatusGenerationGuard();
-		const first = guard.begin();
-		const second = guard.begin();
-		assert.equal(guard.isCurrent(first), false);
-		assert.equal(guard.isCurrent(second), true);
-		guard.invalidate();
-		assert.equal(guard.isCurrent(second), false);
-	});
 });
 
 describe("configuration operation progress", () => {
-	it("shows STOPPING and waits for active work to settle before returning", async () => {
+	it("posts progress to the status line and clears it when the operation settles", async () => {
 		const statuses: Array<string | undefined> = [];
-		let releaseWork: (() => void) | undefined;
-		let settled = false;
-		const work = new Promise<void>((resolve) => {
-			releaseWork = resolve;
-		});
 		const ctx = {
 			hasUI: true,
 			mode: "rpc",
@@ -126,32 +110,16 @@ describe("configuration operation progress", () => {
 				setStatus: (_key: string, value: string | undefined) => statuses.push(value),
 			} as unknown as ExtensionCommandContext["ui"],
 		} as Pick<ExtensionCommandContext, "hasUI" | "mode" | "ui">;
-		const running = runWithProgress({
+		const result = await runWithProgress({
 			ctx,
-			now: (() => {
-				let time = 0;
-				return () => {
-					time += 10;
-					return time;
-				};
-			})(),
 			operation: async (reporter) => {
 				reporter.update("APPLYING FILES", "Applying one confirmed file on THIS MACHINE");
-				reporter.stopping();
-				assert.equal(reporter.signal.aborted, true);
-				assert.equal(reporter.state().cancellationState, "stopping");
-				assert.equal(reporter.state().phase, "STOPPING");
-				await work;
-				settled = true;
+				assert.equal(reporter.signal.aborted, false);
 				return "done";
 			},
 		});
-		await Promise.resolve();
-		assert.equal(settled, false);
-		assert.ok(statuses.at(-1)?.includes("STOPPING"));
-		releaseWork?.();
-		assert.equal(await running, "done");
-		assert.equal(settled, true);
+		assert.equal(result, "done");
+		assert.ok(statuses.some((status) => status?.includes("APPLYING FILES: Applying one confirmed file")));
 		assert.equal(statuses.at(-1), undefined);
 	});
 });

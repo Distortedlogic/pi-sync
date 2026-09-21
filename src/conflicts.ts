@@ -1,9 +1,9 @@
-import { lstat, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import writeFileAtomic from "write-file-atomic";
 import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
-import { type InventoryFile, resolveManagedPath } from "./files.ts";
+import { type InventoryFile, lstatOrUndefined, resolveManagedPath } from "./files.ts";
 import type { PlanArtifact } from "./types.ts";
 
 export type ConflictChoice = "use_machine_both" | "use_shared_both" | "keep_both_stop" | "merge_workspace";
@@ -112,16 +112,6 @@ export function rebuildConflictPlan(options: {
 	});
 }
 
-async function pathExists(path: string): Promise<boolean> {
-	try {
-		await lstat(path);
-		return true;
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-		throw error;
-	}
-}
-
 async function writeConflictCopy(root: string, path: string, file: Readonly<InventoryFile> | undefined): Promise<void> {
 	if (!file) return;
 	if (file.exactBytesBase64 === undefined) throw new Error(`Conflict content is unavailable: ${path}`);
@@ -149,7 +139,8 @@ export async function createConflictMergeWorkspace(options: {
 		getConfigSyncPaths(options.agentDirectory).candidatesDirectory,
 		`merge-${options.plan.planId}`,
 	);
-	if (await pathExists(workspace)) throw new Error("The separate merge workspace already exists and was not replaced.");
+	if (await lstatOrUndefined(workspace))
+		throw new Error("The separate merge workspace already exists and was not replaced.");
 	const machineRoot = resolve(workspace, "THIS_MACHINE");
 	const sharedRoot = resolve(workspace, "SHARED_REPOSITORY");
 	await Promise.all([mkdir(machineRoot, { recursive: true }), mkdir(sharedRoot, { recursive: true })]);

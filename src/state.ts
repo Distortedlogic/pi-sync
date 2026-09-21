@@ -1,10 +1,11 @@
-import { mkdir, open, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import stableStringify from "json-stable-stringify";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 import writeFileAtomic from "write-file-atomic";
 import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
+import { syncDirectory } from "./files.ts";
 import {
 	type BackupMetadata,
 	BackupMetadataSchema,
@@ -69,26 +70,12 @@ export async function readArtifact<TSchemaType extends TSchema>(
 	return validateArtifact(schema, value, label);
 }
 
-async function syncParentDirectory(path: string): Promise<void> {
-	let handle: Awaited<ReturnType<typeof open>> | undefined;
-	try {
-		handle = await open(dirname(path), "r");
-		await handle.sync();
-	} catch (error) {
-		const code = error instanceof Error && "code" in error ? error.code : undefined;
-		if (process.platform === "win32" && ["EISDIR", "EINVAL", "ENOTSUP", "EPERM"].includes(String(code))) return;
-		throw error;
-	} finally {
-		await handle?.close();
-	}
-}
-
 export async function writeDurableJson(path: string, value: unknown): Promise<void> {
 	const text = stableStringify(value, { space: 2 });
 	if (text === undefined) throw new TypeError("Cannot serialize configuration data.");
 	await mkdir(dirname(path), { recursive: true });
 	await writeFileAtomic(path, `${text}\n`, { encoding: "utf8", fsync: true });
-	await syncParentDirectory(path);
+	await syncDirectory(dirname(path));
 }
 
 async function saveArtifact<TSchemaType extends TSchema>(

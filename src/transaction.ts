@@ -1,11 +1,17 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
-import { chmod, lstat, mkdir, open, readdir, readFile, rm, unlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, rm, unlink } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import stableStringify from "json-stable-stringify";
 import writeFileAtomic from "write-file-atomic";
 import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
-import { type InventoryFile, portableExecutableBit, resolveManagedPath } from "./files.ts";
+import {
+	type InventoryFile,
+	portableExecutableBit,
+	resolveManagedPath,
+	sameExactFile,
+	syncDirectory,
+} from "./files.ts";
 import { getBackupMetadataPath, loadBackupMetadata, saveBackupMetadata } from "./state.ts";
 import type { BackupMetadata, Baseline, FileFingerprint, PlanArtifact } from "./types.ts";
 import type { PlanExecutionAuthorization } from "./ui.ts";
@@ -69,10 +75,6 @@ export class MachineApplyError extends Error {
 	}
 }
 
-function hash(content: Uint8Array): string {
-	return createHash("sha256").update(content).digest("hex");
-}
-
 async function pathDetails(operations: MachineApplyOperations, path: string): Promise<Stats | undefined> {
 	try {
 		return await operations.lstat(path);
@@ -93,14 +95,6 @@ async function assertSafePath(operations: MachineApplyOperations, root: string, 
 		if (details.isSymbolicLink()) throw new MachineApplyError(`Managed path is a symlink: ${path}`);
 	}
 	return managedPath.absolutePath;
-}
-
-function fileMatches(
-	left: Readonly<Pick<InventoryFile, "sha256" | "executable">> | undefined,
-	right: Readonly<Pick<InventoryFile, "sha256" | "executable">> | undefined,
-): boolean {
-	if (!left || !right) return left === right;
-	return left.sha256 === right.sha256 && left.executable === right.executable;
 }
 
 function assertFinalTreeMatchesPlan(
@@ -150,7 +144,7 @@ export function buildMachineApplySet(options: {
 	for (const path of paths) {
 		const current = options.currentMachineTree[path];
 		const final = options.committedFinalMachineTree[path];
-		if (fileMatches(current, final)) continue;
+		if (sameExactFile(current, final)) continue;
 		const actions = machineFileActions(options.plan, path);
 		if (actions.length !== 1)
 			throw new MachineApplyError(`Confirmed plan does not name one machine file action: ${path}`);
@@ -194,15 +188,7 @@ export function createMachineApplyOperations(): MachineApplyOperations {
 		chmod,
 		readdir: (path) => readdir(path, { withFileTypes: true }),
 		rm: (path) => rm(path, { force: true, recursive: true }),
-		syncDirectory: async (path) => {
-			if (process.platform === "win32") return;
-			const handle = await open(path, "r");
-			try {
-				await handle.sync();
-			} finally {
-				await handle.close();
-			}
-		},
+		syncDirectory,
 	};
 }
 
@@ -249,7 +235,7 @@ async function createBackup(options: {
 		if (!details?.isFile()) throw new MachineApplyError(`Machine file is unavailable for backup: ${operation.path}`);
 		const content = await options.operations.readFile(machinePath);
 		if (
-			hash(content) !== operation.current.sha256 ||
+			hash("sha256", content, "hex") !== operation.current.sha256 ||
 			portableExecutableBit(details.mode) !== operation.current.executable
 		) {
 			throw new MachineApplyError(`Machine file changed before backup: ${operation.path}`);
@@ -300,7 +286,7 @@ export async function verifyBackup(options: {
 			throw new MachineApplyError(`Backup file is invalid: ${entry.path}`, { backupId: options.backupId });
 		}
 		const content = await operations.readFile(path);
-		if (hash(content) !== entry.sha256 || portableExecutableBit(details.mode) !== entry.executable) {
+		if (hash("sha256", content, "hex") !== entry.sha256 || portableExecutableBit(details.mode) !== entry.executable) {
 			throw new MachineApplyError(`Backup verification failed: ${entry.path}`, { backupId: options.backupId });
 		}
 	}
@@ -318,7 +304,8 @@ async function writeMachineFile(
 	if (existing && !existing.isFile()) throw new MachineApplyError(`Machine path is not a regular file: ${path}`);
 	if (existing) {
 		const content = await operations.readFile(absolutePath);
-		if (hash(content) === file.sha256 && portableExecutableBit(existing.mode) === file.executable) return;
+		if (hash("sha256", content, "hex") === file.sha256 && portableExecutableBit(existing.mode) === file.executable)
+			return;
 	}
 	await operations.mkdir(dirname(absolutePath));
 	await operations.writeAtomic(absolutePath, await exactBytes(file, path), file.executable ? 0o755 : 0o644);
@@ -371,7 +358,8 @@ async function restoreBackup(options: {
 			if (entry.existed) {
 				const backupPath = resolveManagedPath(filesRoot, entry.path).absolutePath;
 				const content = await options.operations.readFile(backupPath);
-				if (hash(content) !== entry.sha256) throw new MachineApplyError(`Backup content is invalid: ${entry.path}`);
+				if (hash("sha256", content, "hex") !== entry.sha256)
+					throw new MachineApplyError(`Backup content is invalid: ${entry.path}`);
 				await writeMachineFile(options.operations, options.machineRoot, entry.path, {
 					path: entry.path,
 					sha256: entry.sha256 as string,
@@ -412,7 +400,7 @@ async function verifyRestoredBackup(options: {
 			}
 			if (!details?.isFile()) throw new MachineApplyError(`Restored file is unavailable: ${entry.path}`);
 			const content = await options.operations.readFile(machinePath);
-			if (hash(content) !== entry.sha256 || portableExecutableBit(details.mode) !== entry.executable) {
+			if (hash("sha256", content, "hex") !== entry.sha256 || portableExecutableBit(details.mode) !== entry.executable) {
 				throw new MachineApplyError(`Restored file verification failed: ${entry.path}`);
 			}
 		} catch {

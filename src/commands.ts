@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -13,7 +13,15 @@ import stableStringify from "json-stable-stringify";
 import { resolveScopePlan } from "./config.ts";
 import { buildConflictSummaries, collectConflictDecisions, createConflictMergeWorkspace } from "./conflicts.ts";
 import { executeConfirmedTransaction, type TransactionSteps } from "./coordinator.ts";
-import { buildInventorySet, type FileInventory, type InventoryFile, type InventorySet } from "./files.ts";
+import {
+	buildInventorySet,
+	createInventoryFile,
+	type FileInventory,
+	type InventoryFile,
+	type InventorySet,
+	sameContentFile,
+	sameExactFile,
+} from "./files.ts";
 import {
 	createCandidateCommit,
 	diffFromLastNamedSnapshot,
@@ -27,6 +35,7 @@ import {
 import { executeConfirmedPackagePlan, packageActionDecisionId } from "./package-execution.ts";
 import { packageSetFingerprint, planPackageChanges } from "./packages.ts";
 import {
+	blockersFor,
 	buildPlanArtifact,
 	createSyncPlan,
 	type FilePlanAction,
@@ -99,22 +108,6 @@ export interface FooterStatus {
 	text: FooterStatusText;
 }
 
-export class StatusGenerationGuard {
-	private generation = 0;
-
-	begin(): number {
-		return ++this.generation;
-	}
-
-	isCurrent(generation: number): boolean {
-		return this.generation === generation;
-	}
-
-	invalidate(): void {
-		this.generation++;
-	}
-}
-
 interface PlanInputs {
 	agentDirectory: string;
 	piDirectory: string;
@@ -157,38 +150,16 @@ interface ParsedCommand {
 const LOADED_RESOURCE_PATTERN =
 	/^agent\/(?:AGENTS\.md|APPEND_SYSTEM\.md|SYSTEM\.md|keybindings\.json|models\.json|settings\.json|extensions\/|prompts\/|skills\/|themes\/)/;
 
-function sha256(value: string | Uint8Array): string {
-	return createHash("sha256").update(value).digest("hex");
-}
-
 function stableHash(value: unknown): string {
 	const text = stableStringify(value);
 	if (text === undefined) throw new Error("Cannot fingerprint configuration synchronization input.");
-	return sha256(text);
+	return hash("sha256", text, "hex");
 }
 
 function exactText(file: Readonly<InventoryFile> | undefined, fallback = "{}\n"): string {
 	return file?.exactBytesBase64 === undefined
 		? fallback
 		: Buffer.from(file.exactBytesBase64, "base64").toString("utf8");
-}
-
-function inventoryFile(path: string, text: string): Readonly<InventoryFile> {
-	const bytes = Buffer.from(text);
-	let comparison = bytes;
-	if (path === "agent/settings.json") {
-		const canonical = stableStringify(JSON.parse(text));
-		if (canonical === undefined) throw new Error("Cannot canonicalize settings.json.");
-		comparison = Buffer.from(canonical);
-	}
-	return Object.freeze({
-		path,
-		size: bytes.length,
-		sha256: sha256(bytes),
-		comparisonSha256: sha256(comparison),
-		executable: false,
-		exactBytesBase64: bytes.toString("base64"),
-	});
 }
 
 function filterInventory(inventory: Readonly<FileInventory>, paths: readonly string[]): Readonly<FileInventory> {
@@ -327,23 +298,6 @@ function resolveConflicts(options: {
 	});
 }
 
-function modeBlockers(
-	mode: SyncMode,
-	actions: readonly Readonly<FilePlanAction>[],
-	scopeExpansion: readonly string[],
-): string[] {
-	const blockers = scopeExpansion.length > 0 ? ["A shared scope expansion requires a separate policy plan."] : [];
-	for (const action of actions) {
-		if (action.risk === "conflict") blockers.push(`${action.path} has no confirmed conflict action.`);
-		else if (mode === "publish" && action.direction === "shared-to-machine") {
-			blockers.push(`${action.path} requires APPLY from SHARED REPOSITORY to THIS MACHINE.`);
-		} else if (mode === "apply" && action.direction === "machine-to-shared") {
-			blockers.push(`${action.path} requires PUBLISH from THIS MACHINE to SHARED REPOSITORY.`);
-		}
-	}
-	return blockers;
-}
-
 async function readSharedManifest(directory: string): Promise<Readonly<SharedManifest>> {
 	let value: unknown;
 	try {
@@ -465,7 +419,7 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 			packageDecisions,
 		});
 		plannedSettingsText = settingsPlan.finalSettingsText;
-		const finalSettingsFile = inventoryFile("agent/settings.json", plannedSettingsText);
+		const finalSettingsFile = createInventoryFile("agent/settings.json", Buffer.from(plannedSettingsText));
 		finalMachineTree["agent/settings.json"] = finalSettingsFile;
 		packageActions.push(...rawPackageActions);
 		packageFingerprint = packageSetFingerprint(
@@ -506,7 +460,10 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 		});
 	}
 	const actions = [...fileActions, ...packageActions];
-	const blockers = modeBlockers(mode, resolvedActions, inputs.scopeExpansion);
+	const blockers = [
+		...(inputs.scopeExpansion.length > 0 ? ["A shared scope expansion requires a separate policy plan."] : []),
+		...blockersFor(mode, resolvedActions),
+	];
 	const plan = buildPlanArtifact({
 		actions,
 		baselineCommit: inputs.state.baseline?.commit ?? null,
@@ -550,14 +507,6 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 	};
 }
 
-function matchesFingerprint(file: Readonly<InventoryFile>, expected: Readonly<FileFingerprint>): boolean {
-	return (
-		file.sha256 === expected.sha256 &&
-		file.comparisonSha256 === expected.comparisonSha256 &&
-		file.executable === expected.executable
-	);
-}
-
 function materializePlanTree(
 	expected: Readonly<Record<string, Readonly<FileFingerprint>>>,
 	candidates: readonly Readonly<Record<string, Readonly<InventoryFile>>>[],
@@ -566,7 +515,9 @@ function materializePlanTree(
 	for (const [path, fingerprint] of Object.entries(expected)) {
 		const file = candidates
 			.map((tree) => tree[path])
-			.find((candidate) => candidate && matchesFingerprint(candidate, fingerprint));
+			.find(
+				(candidate) => candidate && sameExactFile(candidate, fingerprint) && sameContentFile(candidate, fingerprint),
+			);
 		if (!file || file.exactBytesBase64 === undefined) {
 			throw new Error(`Cannot recover exact planned content for ${path}.`);
 		}
@@ -1063,7 +1014,7 @@ async function runDiff(pi: ExtensionAPI, ctx: ExtensionCommandContext, path?: st
 			const candidate = await createCandidateCommit({
 				exec: pi.exec,
 				snapshot: prepared.snapshot,
-				planId: sha256(`${prepared.plan.planId}:diff:${randomUUID()}`),
+				planId: hash("sha256", `${prepared.plan.planId}:diff:${randomUUID()}`, "hex"),
 				currentSharedTree: prepared.sharedTree,
 				finalSharedTree: prepared.finalSharedTree,
 				validation: { managedPatterns: prepared.plan.effectivePaths, policy: prepared.config.policy },
@@ -1159,12 +1110,7 @@ async function updateFooterStatus(options: {
 	}
 	try {
 		const controller = new AbortController();
-		const reporter: ProgressReporter = {
-			signal: controller.signal,
-			update: () => {},
-			stopping: () => controller.abort(),
-			state: () => ({ activeOperation: "Status", cancellationState: "running", elapsedMs: 0, phase: "PREPARING" }),
-		};
+		const reporter: ProgressReporter = { signal: controller.signal, update: () => {} };
 		const inputs = await loadPlanInputs({
 			pi: options.pi,
 			mode: "reconcile",
@@ -1190,19 +1136,19 @@ async function updateFooterStatus(options: {
 }
 
 export function registerConfigSyncCommands(pi: ExtensionAPI): void {
-	const statusGeneration = new StatusGenerationGuard();
+	let statusGeneration = 0;
 	pi.on("session_start", async (_event, ctx) => {
-		const currentGeneration = statusGeneration.begin();
+		const currentGeneration = ++statusGeneration;
 		const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
 		if (recovery) ctx.ui.notify(formatRecoveryNotice(recovery), "warning");
 		await updateFooterStatus({
 			pi,
 			ctx,
-			isCurrent: () => statusGeneration.isCurrent(currentGeneration),
+			isCurrent: () => statusGeneration === currentGeneration,
 		});
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
-		statusGeneration.invalidate();
+		statusGeneration++;
 		ctx.ui.setStatus("config-sync", undefined);
 		ctx.ui.setStatus("config-sync-progress", undefined);
 	});
@@ -1231,11 +1177,11 @@ export function registerConfigSyncCommands(pi: ExtensionAPI): void {
 				}
 				switch (parsed.command) {
 					case "status": {
-						const currentGeneration = statusGeneration.begin();
+						const currentGeneration = ++statusGeneration;
 						const status = await updateFooterStatus({
 							pi,
 							ctx,
-							isCurrent: () => statusGeneration.isCurrent(currentGeneration),
+							isCurrent: () => statusGeneration === currentGeneration,
 						});
 						ctx.ui.notify(
 							`${status.text} | Freshness: ${status.freshness}${status.remoteCheckedAt ? ` | SHARED REPOSITORY checked at: ${status.remoteCheckedAt}` : ""}`,

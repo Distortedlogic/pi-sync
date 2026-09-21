@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { isAbsolute, win32 } from "node:path";
 import stableStringify from "json-stable-stringify";
 import npa from "npm-package-arg";
@@ -331,7 +331,7 @@ export function packageSetFingerprint(packages: readonly Readonly<ParsedPackageD
 			})),
 	);
 	if (value === undefined) throw new PackagePlanError("Cannot fingerprint package declarations.");
-	return createHash("sha256").update(value).digest("hex");
+	return hash("sha256", value, "hex");
 }
 
 export function applyPackageDecisions(
@@ -370,6 +370,6 @@ export function applyPackageDecisions(
 		finalDeclarations: plan.finalDeclarations,
 		preservedMachineSources: plan.preservedMachineSources,
 		executionApproved: decidedActions.every((action) => action.decision === "approved"),
-		decisionFingerprint: createHash("sha256").update(serializedDecisions).digest("hex"),
+		decisionFingerprint: hash("sha256", serializedDecisions, "hex"),
 	});
 }

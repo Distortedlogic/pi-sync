@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import jsonPatch, { type Operation } from "fast-json-patch";
 import stableStringify from "json-stable-stringify";
 import { getNodeValue, type Node as JsonNode, parseTree } from "jsonc-parser";
@@ -81,10 +81,6 @@ function stableJson(value: unknown): string {
 	return `${text}\n`;
 }
 
-function fingerprint(text: string): string {
-	return createHash("sha256").update(text).digest("hex");
-}
-
 export function parseSettings(
 	text: string,
 	options: { source: "machine" | "shared"; policy: LocalPolicy },
@@ -100,7 +96,7 @@ export function parseSettings(
 	const settings = value as Record<string, unknown>;
 	const canonicalText = stableJson(settings);
 	const packages = parsePackageDeclarations(settings.packages, options);
-	return Object.freeze({ canonicalText, fingerprint: fingerprint(canonicalText), packages, value: settings });
+	return Object.freeze({ canonicalText, fingerprint: hash("sha256", canonicalText, "hex"), packages, value: settings });
 }
 
 function validatePolicyPointer(pointer: string): void {
@@ -246,7 +242,7 @@ export function createApplySettingsPlan(options: {
 	const planData = stableStringify({
 		machineFingerprint: machine.fingerprint,
 		sharedFingerprint: shared.fingerprint,
-		finalSettingsFingerprint: fingerprint(finalSettingsText),
+		finalSettingsFingerprint: hash("sha256", finalSettingsText, "hex"),
 		settingChanges: changes,
 		preservedMachineSettings,
 		preservedMachinePackageSources: decidedPackages.preservedMachineSources,
@@ -255,10 +251,10 @@ export function createApplySettingsPlan(options: {
 	});
 	if (planData === undefined) throw new SettingsPlanError("Cannot fingerprint settings plan.");
 	return Object.freeze({
-		planId: fingerprint(planData),
+		planId: hash("sha256", planData, "hex"),
 		machineFingerprint: machine.fingerprint,
 		sharedFingerprint: shared.fingerprint,
-		finalSettingsFingerprint: fingerprint(finalSettingsText),
+		finalSettingsFingerprint: hash("sha256", finalSettingsText, "hex"),
 		finalSettingsText,
 		settingChanges: changes,
 		preservedMachineSettings,

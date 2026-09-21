@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -8,7 +8,7 @@ import stableStringify from "json-stable-stringify";
 import { lock } from "proper-lockfile";
 import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
 import { nextTransactionRecoveryStep, TransactionLockedError } from "./coordinator.ts";
-import { discoverFileInventory, type InventoryFile } from "./files.ts";
+import { discoverFileInventory, type InventoryFile, sameExactFile } from "./files.ts";
 import { getBackupMetadataPath, loadJournal } from "./state.ts";
 import { restoreVerifiedMachineBackup, verifyBackup } from "./transaction.ts";
 import type { BackupMetadata, FileFingerprint, JournalStage } from "./types.ts";
@@ -182,17 +182,12 @@ function fingerprintTree(
 	);
 }
 
-function sameFile(left: Readonly<InventoryFile> | undefined, right: Readonly<InventoryFile> | undefined): boolean {
-	if (!left || !right) return left === right;
-	return left.sha256 === right.sha256 && left.executable === right.executable;
-}
-
 function createRestorePlanId(data: Omit<RestorePlan, "planId" | "shortPlanId">): string {
 	const securityData: Record<string, unknown> = { ...data };
 	delete securityData.createdAt;
 	const canonical = stableStringify(securityData);
 	if (canonical === undefined) throw new Error("Cannot create the restore plan ID.");
-	return createHash("sha256").update(canonical).digest("hex");
+	return hash("sha256", canonical, "hex");
 }
 
 function freezeRestorePlan(data: Omit<RestorePlan, "planId" | "shortPlanId">): Readonly<RestorePlan> {
@@ -227,7 +222,7 @@ export async function buildRestorePlan(options: {
 	for (const entry of metadata.entries) {
 		const currentFile = current.files[entry.path];
 		const finalFile = entry.existed ? backup.files[entry.path] : undefined;
-		if (sameFile(currentFile, finalFile)) continue;
+		if (sameExactFile(currentFile, finalFile)) continue;
 		if (finalFile) {
 			actions.push({
 				action: "WRITE ON THIS MACHINE",

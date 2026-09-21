@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import stableStringify from "json-stable-stringify";
-import type { FileInventory, InventoryFile } from "./files.ts";
+import { type FileInventory, type InventoryFile, sameContentFile } from "./files.ts";
 import { CONFIG_SYNC_SCHEMA_VERSION, type FileFingerprint, type PlanArtifact } from "./types.ts";
 
 export type SyncMode = "publish" | "apply" | "reconcile";
@@ -45,11 +45,6 @@ const RISK_ORDER: Readonly<Record<PlanRisk, number>> = Object.freeze({
 	write: 4,
 	baseline: 5,
 });
-
-function equivalent(left: Readonly<InventoryFile> | undefined, right: Readonly<InventoryFile> | undefined): boolean {
-	if (left === undefined || right === undefined) return left === right;
-	return left.comparisonSha256 === right.comparisonSha256 && left.executable === right.executable;
-}
 
 function createAction(
 	path: string,
@@ -142,19 +137,19 @@ export function classifyFile(
 		if (machine === undefined && shared !== undefined) {
 			return writeOnMachine(path, "SHARED REPOSITORY has an untracked file and THIS MACHINE has no file at this path.");
 		}
-		if (equivalent(machine, shared)) {
+		if (sameContentFile(machine, shared)) {
 			return updateBaseline(path, "THIS MACHINE and SHARED REPOSITORY have the same untracked value.");
 		}
 		return conflict(path, "THIS MACHINE and SHARED REPOSITORY have different untracked values.");
 	}
 
-	if (equivalent(machine, shared)) {
-		if (equivalent(machine, baseline)) return undefined;
+	if (sameContentFile(machine, shared)) {
+		if (sameContentFile(machine, baseline)) return undefined;
 		return updateBaseline(path, "THIS MACHINE and SHARED REPOSITORY already have the same result.");
 	}
 
-	const machineUnchanged = equivalent(machine, baseline);
-	const sharedUnchanged = equivalent(shared, baseline);
+	const machineUnchanged = sameContentFile(machine, baseline);
+	const sharedUnchanged = sameContentFile(shared, baseline);
 	if (machineUnchanged) {
 		return shared === undefined
 			? deleteFromMachine(path)
@@ -186,7 +181,7 @@ function applyAction(action: Readonly<FilePlanAction>): boolean {
 	return action.direction === "shared-to-machine";
 }
 
-function blockersFor(mode: SyncMode, actions: readonly Readonly<FilePlanAction>[]): string[] {
+export function blockersFor(mode: SyncMode, actions: readonly Readonly<FilePlanAction>[]): string[] {
 	const blockers: string[] = [];
 	for (const action of actions) {
 		if (action.risk === "conflict") {
@@ -379,7 +374,7 @@ function securityAction(action: Readonly<PlanArtifactAction>): Record<string, un
 export function planActionId(action: Readonly<PlanArtifactAction>): string {
 	const canonical = stableStringify(securityAction(action));
 	if (canonical === undefined) throw new Error("Cannot identify a plan action.");
-	return createHash("sha256").update(canonical).digest("hex");
+	return hash("sha256", canonical, "hex");
 }
 
 function securityEffect(effect: Readonly<PlanEffect>): Record<string, unknown> {
@@ -430,7 +425,7 @@ export function buildPlanArtifact(options: BuildPlanArtifactOptions): Readonly<P
 	};
 	const canonical = stableStringify(securityData);
 	if (canonical === undefined) throw new Error("Cannot create canonical plan data.");
-	const planId = createHash("sha256").update(canonical).digest("hex");
+	const planId = hash("sha256", canonical, "hex");
 	return Object.freeze({
 		...securityData,
 		actions,

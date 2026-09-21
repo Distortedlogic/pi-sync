@@ -113,7 +113,7 @@ export interface ScopePlan {
 	policyChangeOnly: boolean;
 }
 
-const MATCH_OPTIONS = {
+export const MATCH_OPTIONS = {
 	dot: true,
 	matchBase: false,
 	nocase: false,

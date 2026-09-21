@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
 import { type FileHandle, lstat, open, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import stableStringify from "json-stable-stringify";
 import { minimatch } from "minimatch";
-import { DEFAULT_MANAGED_SCOPE, isPermanentlyDenied } from "./config.ts";
-import type { Baseline } from "./types.ts";
+import { DEFAULT_MANAGED_SCOPE, isPermanentlyDenied, MATCH_OPTIONS } from "./config.ts";
+import type { Baseline, FileFingerprint } from "./types.ts";
 
 export interface InventoryLimits {
 	maxFileBytes: number;
@@ -50,14 +50,6 @@ export const DEFAULT_INVENTORY_LIMITS = Object.freeze({
 	maxFileBytes: 10 * 1024 * 1024,
 	maxTotalBytes: 50 * 1024 * 1024,
 });
-
-const MATCH_OPTIONS = {
-	dot: true,
-	matchBase: false,
-	nocase: false,
-	nonegate: true,
-	windowsPathsNoEscape: true,
-} as const;
 
 const WINDOWS_RESERVED_NAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
@@ -153,6 +145,41 @@ export function assertNoPathCollisions(paths: readonly string[]): void {
 
 export function portableExecutableBit(mode: number, platform: NodeJS.Platform = process.platform): boolean {
 	return platform === "win32" ? false : (mode & 0o111) !== 0;
+}
+
+export function sameExactFile(
+	left: Readonly<Partial<FileFingerprint>> | undefined,
+	right: Readonly<Partial<FileFingerprint>> | undefined,
+): boolean {
+	if (!left || !right) return left === right;
+	return left.sha256 === right.sha256 && left.executable === right.executable;
+}
+
+export function sameContentFile(
+	left: Readonly<Partial<FileFingerprint>> | undefined,
+	right: Readonly<Partial<FileFingerprint>> | undefined,
+): boolean {
+	if (!left || !right) return left === right;
+	return left.comparisonSha256 === right.comparisonSha256 && left.executable === right.executable;
+}
+
+export async function lstatOrUndefined(path: string): Promise<Stats | undefined> {
+	try {
+		return await lstat(path);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+export async function syncDirectory(path: string): Promise<void> {
+	if (process.platform === "win32") return;
+	const handle = await open(path, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
 }
 
 async function validateRoot(root: string, label: string): Promise<void> {
@@ -260,10 +287,6 @@ function assertTotalPlanSize(machineScan: InventoryScan, sharedScan: InventorySc
 	}
 }
 
-function hash(bytes: Uint8Array): string {
-	return createHash("sha256").update(bytes).digest("hex");
-}
-
 function comparisonBytes(path: string, exactBytes: Buffer): Buffer {
 	if (path !== "agent/settings.json") return exactBytes;
 	try {
@@ -275,6 +298,18 @@ function comparisonBytes(path: string, exactBytes: Buffer): Buffer {
 	} catch (error) {
 		throw new InventoryError("Cannot canonicalize managed JSON", path, { cause: error });
 	}
+}
+
+export function createInventoryFile(path: string, exactBytes: Buffer): Readonly<InventoryFile> {
+	const comparedBytes = comparisonBytes(path, exactBytes);
+	return Object.freeze({
+		path,
+		size: exactBytes.byteLength,
+		sha256: hash("sha256", exactBytes, "hex"),
+		comparisonSha256: hash("sha256", comparedBytes, "hex"),
+		executable: false,
+		exactBytesBase64: exactBytes.toString("base64"),
+	});
 }
 
 async function materializeInventory(
@@ -314,8 +349,8 @@ async function materializeInventory(
 			files[candidate.relativePath] = Object.freeze({
 				path: candidate.relativePath,
 				size: exactBytes.byteLength,
-				sha256: hash(exactBytes),
-				comparisonSha256: hash(comparedBytes),
+				sha256: hash("sha256", exactBytes, "hex"),
+				comparisonSha256: hash("sha256", comparedBytes, "hex"),
 				executable: portableExecutableBit(details.mode),
 				exactBytesBase64: exactBytes.toString("base64"),
 			});

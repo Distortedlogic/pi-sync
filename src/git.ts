@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { chmod, mkdir, unlink } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import writeFileAtomic from "write-file-atomic";
 import { createDefaultLocalPolicy, ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
-import { type InventoryFile, resolveManagedPath } from "./files.ts";
+import { type InventoryFile, lstatOrUndefined, resolveManagedPath } from "./files.ts";
 import { type CandidateSecurityOptions, validateStagedCandidate } from "./security.ts";
 import { validateArtifact } from "./state.ts";
 import { type RepositoryConfig, type SharedManifest, SharedManifestSchema } from "./types.ts";
@@ -101,15 +101,6 @@ async function executeGit(
 	return result;
 }
 
-async function pathDetails(path: string): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
-	try {
-		return await lstat(path);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-		throw error;
-	}
-}
-
 function workspaceFor(agentDirectory: string, branch: string): Readonly<GitWorkspace> {
 	const paths = getConfigSyncPaths(agentDirectory);
 	return Object.freeze({
@@ -125,7 +116,7 @@ async function inspectWorkspace(
 	repositoryPath: string,
 	signal?: AbortSignal,
 ): Promise<Readonly<GitDoctorResult> | undefined> {
-	const details = await pathDetails(workspace.repositoryDirectory);
+	const details = await lstatOrUndefined(workspace.repositoryDirectory);
 	if (!details?.isDirectory() || details.isSymbolicLink()) {
 		return Object.freeze({
 			ok: false,
@@ -180,7 +171,7 @@ async function ensureWorkspace(
 ): Promise<{ workspace: Readonly<GitWorkspace>; doctor?: Readonly<GitDoctorResult> }> {
 	const paths = await ensureConfigSyncDirectories(agentDirectory);
 	const workspace = workspaceFor(agentDirectory, repository.branch);
-	const existing = await pathDetails(workspace.repositoryDirectory);
+	const existing = await lstatOrUndefined(workspace.repositoryDirectory);
 	if (!existing) {
 		await executeGit(
 			exec,
@@ -232,7 +223,7 @@ export async function inspectSetupRepository(options: {
 }): Promise<Readonly<SetupRepositoryInspection>> {
 	const paths = await ensureConfigSyncDirectories(options.agentDirectory);
 	const workspace = workspaceFor(options.agentDirectory, options.repository.branch);
-	const existing = await pathDetails(workspace.repositoryDirectory);
+	const existing = await lstatOrUndefined(workspace.repositoryDirectory);
 	if (!existing) {
 		await mkdir(workspace.repositoryDirectory, { recursive: true });
 		await executeGit(options.exec, workspace, ["init"], "Extension-owned Git initialization", {
@@ -333,7 +324,7 @@ export async function withSharedSnapshotWorktree<T>(options: {
 		"candidates",
 		`snapshot-${options.snapshot.sharedCommit}-${randomUUID()}`,
 	);
-	if (await pathDetails(directory)) {
+	if (await lstatOrUndefined(directory)) {
 		throw new GitOperationError("The exact SHARED REPOSITORY snapshot workspace already exists.");
 	}
 	await executeGit(
@@ -383,7 +374,7 @@ async function assertSafeCandidatePath(root: string, path: string): Promise<stri
 	let current = resolve(root);
 	for (const component of rootRelative.split(sep)) {
 		current = resolve(current, component);
-		const details = await pathDetails(current);
+		const details = await lstatOrUndefined(current);
 		if (!details) break;
 		if (details.isSymbolicLink()) throw new GitOperationError(`Candidate path is a symlink: ${path}`);
 	}
@@ -393,7 +384,7 @@ async function assertSafeCandidatePath(root: string, path: string): Promise<stri
 async function writeCandidateFile(root: string, path: string, file: Readonly<InventoryFile>): Promise<void> {
 	if (file.exactBytesBase64 === undefined) throw new GitOperationError(`Candidate content is unavailable: ${path}`);
 	const absolutePath = await assertSafeCandidatePath(root, path);
-	const existing = await pathDetails(absolutePath);
+	const existing = await lstatOrUndefined(absolutePath);
 	if (existing && !existing.isFile()) throw new GitOperationError(`Candidate path is not a regular file: ${path}`);
 	await mkdir(dirname(absolutePath), { recursive: true });
 	await writeFileAtomic(absolutePath, Buffer.from(file.exactBytesBase64, "base64"), {
@@ -405,7 +396,7 @@ async function writeCandidateFile(root: string, path: string, file: Readonly<Inv
 
 async function deleteCandidateFile(root: string, path: string): Promise<void> {
 	const absolutePath = await assertSafeCandidatePath(root, path);
-	const existing = await pathDetails(absolutePath);
+	const existing = await lstatOrUndefined(absolutePath);
 	if (!existing) return;
 	if (!existing.isFile()) throw new GitOperationError(`Candidate path is not a regular file: ${path}`);
 	await unlink(absolutePath);
@@ -461,7 +452,7 @@ export async function createCandidateCommit(options: {
 		"candidates",
 		options.planId,
 	);
-	if (await pathDetails(candidateDirectory))
+	if (await lstatOrUndefined(candidateDirectory))
 		throw new GitOperationError("Candidate workspace already exists and will not be replaced.");
 	await executeGit(
 		options.exec,

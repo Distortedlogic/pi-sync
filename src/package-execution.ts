@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
@@ -39,10 +39,6 @@ export class PackageExecutionError extends Error {
 const OPERATION_ORDER = Object.freeze({ remove: 0, update: 1, install: 2 });
 const DEFAULT_PACKAGE_TIMEOUT_MS = 120_000;
 
-function hash(value: string | Uint8Array): string {
-	return createHash("sha256").update(value).digest("hex");
-}
-
 export function packageActionDecisionId(action: Readonly<ConfirmedPackageAction>): string {
 	const value = stableStringify({
 		operation: action.packageOperation ?? null,
@@ -53,7 +49,7 @@ export function packageActionDecisionId(action: Readonly<ConfirmedPackageAction>
 		previousNormalizedSource: action.previousNormalizedPackageSource ?? null,
 	});
 	if (value === undefined) throw new PackageExecutionError("Cannot identify package action.");
-	return hash(value);
+	return hash("sha256", value, "hex");
 }
 
 function validatePackageAction(action: Readonly<ConfirmedPackageAction>): void {
@@ -149,10 +145,14 @@ function validateExactSources(options: {
 		throw new PackageExecutionError("Planned package sources do not match the confirmed plan.");
 	}
 	const plannedSettings = options.plan.finalMachineTree["agent/settings.json"];
-	if (!plannedSettings || plannedSettings.sha256 !== hash(options.plannedSettingsText)) {
+	if (!plannedSettings || plannedSettings.sha256 !== hash("sha256", options.plannedSettingsText, "hex")) {
 		throw new PackageExecutionError("Exact planned settings do not match the confirmed plan.");
 	}
-	if (options.allowAlreadyPlanned && hash(options.currentSettingsText) === hash(options.plannedSettingsText)) return;
+	if (
+		options.allowAlreadyPlanned &&
+		hash("sha256", options.currentSettingsText, "hex") === hash("sha256", options.plannedSettingsText, "hex")
+	)
+		return;
 	const currentByIdentity = packageMap(current);
 	const plannedByIdentity = packageMap(planned);
 	for (const action of options.actions) {
@@ -458,7 +458,10 @@ export async function executeConfirmedPackagePlan(options: {
 		try {
 			await restoreSettings({ operations, settingsPath, original });
 		} catch {
-			rollbackErrors.push({ actionId: hash("settings.json"), message: "settings.json restore failed." });
+			rollbackErrors.push({
+				actionId: hash("sha256", "settings.json", "hex"),
+				message: "settings.json restore failed.",
+			});
 		}
 		throw new PackageExecutionError(safeErrorMessage(error), rollbackErrors);
 	}
