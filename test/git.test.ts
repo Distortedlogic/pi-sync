@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
-import { getConfigSyncPaths } from "../src/config.ts";
+import { DEFAULT_BITWARDEN_MANIFEST, getConfigSyncPaths } from "../src/config.ts";
 import { discoverFileInventory, type InventoryFile } from "../src/files.ts";
 import {
 	createCandidateCommit,
@@ -23,23 +23,6 @@ import { createTemporaryAgentDirectory, createTemporaryBareGitRepository } from 
 
 const execFileAsync = promisify(execFile);
 const PLAN_ID = "1".repeat(64);
-const BITWARDEN_MANIFEST = {
-	projectId: "bdf0f162-017c-4811-a0f4-b48e010f6287",
-	environment: {
-		ALIBABA_TOKEN_PLAN_API_KEY: "alibaba-token-plan-api-key",
-		EXA_API_KEY: "exa-api-key",
-		FORGEJO_TOKEN: "forgejo-token",
-		GEMINI_API_KEY: "gemini-api-key",
-		KIMI_API_KEY: "kimi-api-key",
-		LANGFUSE_BASE_URL: "langfuse-base-url",
-		LANGFUSE_PUBLIC_KEY: "langfuse-public-key",
-		LANGFUSE_SECRET_KEY: "langfuse-secret-key",
-		PERPLEXITY_API_KEY: "perplexity-api-key",
-		PINCHTAB_TOKEN: "pinchtab-token",
-		SKILLSMP_API_KEY: "skillsmp-api-key",
-	},
-	authJsonKey: "pi-auth-json",
-} as const;
 interface GitCall {
 	command: string;
 	args: string[];
@@ -80,7 +63,7 @@ async function seedRepository(repositoryPath: string, parent: string): Promise<s
 		writeFile(join(seed, "agent", "settings.json"), '{"theme":"dark"}\n', "utf8"),
 		writeFile(
 			join(seed, SHARED_MANIFEST_PATH),
-			`${JSON.stringify({ bitwarden: BITWARDEN_MANIFEST, managedScope: ["agent/settings.json"], schemaVersion: 1 })}\n`,
+			`${JSON.stringify({ bitwarden: DEFAULT_BITWARDEN_MANIFEST, managedScope: ["agent/settings.json"], schemaVersion: 1 })}\n`,
 			"utf8",
 		),
 	]);
@@ -198,7 +181,7 @@ describe("setup repository inspection", () => {
 			});
 			assert.equal(inspected.empty, false);
 			assert.deepEqual(inspected.manifest, {
-				bitwarden: BITWARDEN_MANIFEST,
+				bitwarden: DEFAULT_BITWARDEN_MANIFEST,
 				managedScope: ["agent/settings.json"],
 				schemaVersion: 1,
 			});
