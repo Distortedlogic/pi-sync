@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname } from "node:path";
 import {
 	DEFAULT_MAX_BYTES,
@@ -11,16 +10,10 @@ import {
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
-import { createDefaultLocalPolicy, resolveScopePlan } from "./config.ts";
+import { resolveScopePlan } from "./config.ts";
 import { buildConflictSummaries, collectConflictDecisions, createConflictMergeWorkspace } from "./conflicts.ts";
 import { executeConfirmedTransaction, type TransactionSteps } from "./coordinator.ts";
-import {
-	buildInventorySet,
-	discoverFileInventory,
-	type FileInventory,
-	type InventoryFile,
-	type InventorySet,
-} from "./files.ts";
+import { buildInventorySet, type FileInventory, type InventoryFile, type InventorySet } from "./files.ts";
 import {
 	createCandidateCommit,
 	diffFromLastNamedSnapshot,
@@ -31,7 +24,6 @@ import {
 	type SharedSnapshot,
 	withSharedSnapshotWorktree,
 } from "./git.ts";
-import { buildMigrationPreview, formatMigrationPreview, importLegacyMigration, reviewMigration } from "./migration.ts";
 import { executeConfirmedPackagePlan, packageActionDecisionId } from "./package-execution.ts";
 import { packageSetFingerprint, planPackageChanges } from "./packages.ts";
 import {
@@ -91,7 +83,6 @@ export const CONFIG_SYNC_SUBCOMMANDS = Object.freeze([
 	"recover",
 	"restore",
 	"doctor",
-	"migrate",
 ]);
 
 export type FooterStatusText =
@@ -1038,115 +1029,6 @@ async function runRestoreCommand(options: {
 	return shouldReload(options.ctx, resourcesChanged);
 }
 
-async function runMigration(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	suppliedMigrationId?: string,
-): Promise<void> {
-	await runWithProgress({
-		ctx,
-		operation: async (reporter) => {
-			reporter.update("PREPARING", "Validating legacy configuration without changing it");
-			const preview = await buildMigrationPreview({
-				exec: pi.exec,
-				agentDirectory: getActiveAgentDirectory(),
-				homeDirectory: homedir(),
-				signal: reporter.signal,
-			});
-			const review = suppliedMigrationId
-				? ({ status: "preview_only", preview, text: formatMigrationPreview(preview) } as const)
-				: await reviewMigration({ ctx, preview });
-			const authorization =
-				review.status === "confirmed"
-					? review.authorization
-					: review.status === "preview_only" && suppliedMigrationId
-						? { migrationId: suppliedMigrationId }
-						: undefined;
-			if (!authorization) {
-				appendResult(pi, {
-					kind: "migration_preview",
-					migrationId: preview.migrationId,
-					status: preview.status,
-				});
-				if (ctx.hasUI && review.status !== "cancelled") ctx.ui.notify(formatMigrationPreview(preview), "info");
-				return;
-			}
-			const fresh = await buildMigrationPreview({
-				exec: pi.exec,
-				agentDirectory: getActiveAgentDirectory(),
-				homeDirectory: homedir(),
-				signal: reporter.signal,
-			});
-			if (fresh.migrationId !== preview.migrationId) throw new Error("PLAN EXPIRED: Legacy migration inputs changed.");
-			if (!fresh.repositoryPath || !fresh.branch || !fresh.baseline) {
-				throw new Error("The migration preview has no complete legacy repository state.");
-			}
-			reporter.update("FETCHING", "Fetching the exact legacy SHARED REPOSITORY head");
-			const fetched = await fetchSharedSnapshot({
-				exec: pi.exec,
-				agentDirectory: getActiveAgentDirectory(),
-				repository: { branch: fresh.branch, repositoryPath: fresh.repositoryPath },
-				signal: reporter.signal,
-			});
-			if (fetched.status === "doctor") throw new Error(fetched.doctor.message);
-			if (fetched.snapshot.sharedCommit !== fresh.baseline.commit) {
-				throw new Error("PLAN EXPIRED: Legacy SHARED REPOSITORY changed after migration review.");
-			}
-			let currentSharedTree: Readonly<Record<string, Readonly<InventoryFile>>> | undefined;
-			await withSharedSnapshotWorktree({
-				exec: pi.exec,
-				snapshot: fetched.snapshot,
-				signal: reporter.signal,
-				run: async (directory) => {
-					currentSharedTree = (
-						await discoverFileInventory(directory, "shared", {
-							managedPatterns: [SHARED_MANIFEST_PATH, "sync/**"],
-							signal: reporter.signal,
-						})
-					).files;
-				},
-			});
-			if (!currentSharedTree) throw new Error("Legacy SHARED REPOSITORY inventory is unavailable.");
-			reporter.update("VALIDATING", "Validating the reviewed Pi-root migration candidate");
-			const migrationPolicy = { ...createDefaultLocalPolicy(), machineOnlySettings: [] };
-			const candidate = await createCandidateCommit({
-				exec: pi.exec,
-				snapshot: fetched.snapshot,
-				planId: fresh.migrationId,
-				currentSharedTree,
-				finalSharedTree: fresh.finalSharedTree,
-				validation: {
-					managedPatterns: Object.keys(fresh.finalSharedTree),
-					policy: migrationPolicy,
-				},
-				signal: reporter.signal,
-			});
-			reporter.update("PUBLISHING", "Publishing the reviewed Pi-root migration candidate");
-			const publication = await publishCandidateCommit({ exec: pi.exec, candidate, signal: reporter.signal });
-			if (publication.status === "plan_expired") {
-				throw new Error("PLAN EXPIRED: Legacy SHARED REPOSITORY changed before migration publish.");
-			}
-			const result = await importLegacyMigration({
-				agentDirectory: getActiveAgentDirectory(),
-				preview: fresh,
-				authorization,
-				publishedCommit: publication.publishedCommit,
-			});
-			appendResult(pi, {
-				completedAt: new Date().toISOString(),
-				deletionAllowed: result.deletionAllowed,
-				kind: "migration_receipt",
-				migrationId: preview.migrationId,
-				requiredMode: result.requiredMode,
-			});
-			ctx.ui.notify(
-				"Migration imported validated metadata only. Run /config-sync reconcile. Old state, backups, clone data, package declarations, and SHARED REPOSITORY history were not changed.",
-				"info",
-			);
-		},
-	});
-}
-
 async function runDoctor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	const config = await loadConfig(getActiveAgentDirectory());
 	if (!config) {
@@ -1394,9 +1276,6 @@ export function registerConfigSyncCommands(pi: ExtensionAPI): void {
 						return;
 					case "doctor":
 						await runDoctor(pi, ctx);
-						return;
-					case "migrate":
-						await runMigration(pi, ctx, parsed.arguments[0]);
 						return;
 				}
 			} catch (error) {
