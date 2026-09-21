@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, open, readdir } from "node:fs/promises";
-import { isAbsolute, parse, relative, resolve, sep, win32 } from "node:path";
+import { type FileHandle, lstat, open, readdir, realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import stableStringify from "json-stable-stringify";
 import { minimatch } from "minimatch";
 import { DEFAULT_MANAGED_SCOPE, isPermanentlyDenied } from "./config.ts";
@@ -60,7 +60,6 @@ const MATCH_OPTIONS = {
 } as const;
 
 const WINDOWS_RESERVED_NAME = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
-const GLOB_CHARACTER = /[*?[\]{}()!+@]/;
 
 interface ManagedPath {
 	relativePath: string;
@@ -156,47 +155,17 @@ export function portableExecutableBit(mode: number, platform: NodeJS.Platform = 
 	return platform === "win32" ? false : (mode & 0o111) !== 0;
 }
 
-async function assertNoSymlinkComponents(path: string, label: string): Promise<void> {
-	const absolutePath = resolve(path);
-	const parsed = parse(absolutePath);
-	let current = parsed.root;
-	for (const component of absolutePath.slice(parsed.root.length).split(sep).filter(Boolean)) {
-		current = resolve(current, component);
-		let details: Stats;
-		try {
-			details = await lstat(current);
-		} catch (error) {
-			throw new InventoryError(`Cannot inspect ${label} path component`, current, { cause: error });
-		}
-		if (details.isSymbolicLink()) throw new InventoryError(`${label} path component is a symlink`, current);
-	}
-}
-
 async function validateRoot(root: string, label: string): Promise<void> {
-	await assertNoSymlinkComponents(root, label);
-	const details = await lstat(root);
-	if (!details.isDirectory()) throw new InventoryError(`${label} root is not a directory`, root);
-}
-
-function staticPatternPrefix(pattern: string): string {
-	const parts: string[] = [];
-	for (const segment of pattern.split("/")) {
-		if (GLOB_CHARACTER.test(segment)) break;
-		parts.push(segment);
+	const resolvedRoot = resolve(root);
+	let canonicalRoot: string;
+	try {
+		canonicalRoot = await realpath(resolvedRoot);
+	} catch (error) {
+		throw new InventoryError(`Cannot inspect ${label} root`, resolvedRoot, { cause: error });
 	}
-	return parts.join("/");
-}
-
-function canContainManagedPath(directoryPath: string, patterns: readonly string[]): boolean {
-	return patterns.some((pattern) => {
-		const prefix = staticPatternPrefix(pattern);
-		return (
-			prefix === "" ||
-			prefix === directoryPath ||
-			prefix.startsWith(`${directoryPath}/`) ||
-			directoryPath.startsWith(`${prefix}/`)
-		);
-	});
+	if (canonicalRoot !== resolvedRoot) throw new InventoryError(`${label} root path contains a symlink`, resolvedRoot);
+	const details = await lstat(resolvedRoot);
+	if (!details.isDirectory()) throw new InventoryError(`${label} root is not a directory`, resolvedRoot);
 }
 
 function matchesManagedPath(path: string, patterns: readonly string[]): boolean {
@@ -246,9 +215,7 @@ async function scanRoot(
 			collisionPaths.push(rawRelativePath);
 
 			if (details.isDirectory()) {
-				if (canContainManagedPath(managedPath.relativePath, patterns)) {
-					await visit(managedPath.absolutePath, managedPath.relativePath);
-				}
+				await visit(managedPath.absolutePath, managedPath.relativePath);
 				continue;
 			}
 			if (!matchesManagedPath(managedPath.relativePath, patterns)) continue;

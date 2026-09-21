@@ -34,7 +34,7 @@ describe("managed path safety", () => {
 			if (process.platform !== "win32") {
 				const linkedRoot = join(temporary.path, "linked-machine");
 				await symlink(roots.machine, linkedRoot, "dir");
-				await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /path component is a symlink/);
+				await assert.rejects(discoverFileInventory(linkedRoot, "machine"), /root path contains a symlink/);
 
 				const symlinkMachine = join(temporary.path, "symlink-machine");
 				await mkdir(join(symlinkMachine, "agent"), { recursive: true });

@@ -15,7 +15,7 @@ import {
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
 const CLEAN_SCANNER: SecretScannerFactory = async () => ({
-	scan: async () => ({ ok: true, output: "[]" }),
+	scan: async () => [],
 });
 
 async function validationInput(
@@ -268,7 +268,7 @@ describe("secret scanner failure handling", () => {
 		{
 			name: "malformed-output",
 			factory: async () => ({
-				scan: async () => ({ ok: true, output: "not JSON" }),
+				scan: async () => ["not-a-message"],
 			}),
 			phase: "parse",
 		},
@@ -303,21 +303,15 @@ describe("secret scanner failure handling", () => {
 				scannerFactory: async () => ({
 					scan: async (_content, path) =>
 						path === "notes.txt"
-							? {
-									ok: false,
-									output: JSON.stringify([
-										{
-											messages: [
-												{
-													ruleId: "@secretlint/example",
-													line: 2,
-													message: `matched ${matchedValue}`,
-												},
-											],
-										},
-									]),
-								}
-							: { ok: true, output: "[]" },
+							? [
+									{
+										ruleId: "@secretlint/example",
+										messageId: "example",
+										loc: { start: { line: 2, column: 1 }, end: { line: 2, column: 5 } },
+										message: `matched ${matchedValue}`,
+									},
+								]
+							: [],
 				}),
 			});
 			try {

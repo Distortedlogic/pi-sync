@@ -1,6 +1,7 @@
-import { dirname, resolve } from "node:path";
+import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createEngine } from "@secretlint/node";
+import { loadPackagesFromConfigDescriptor } from "@secretlint/config-loader";
+import { lintSource } from "@secretlint/core";
 import { parseTree } from "jsonc-parser";
 import { isPermanentlyDenied } from "./config.ts";
 import { discoverFileInventory, type InventoryFile, type InventoryLimits, resolveManagedPath } from "./files.ts";
@@ -13,13 +14,8 @@ export interface SecretFinding {
 	line: number;
 }
 
-export interface SecretScanResult {
-	ok: boolean;
-	output: string;
-}
-
 export interface SecretScanner {
-	scan(content: string, filePath: string, signal?: AbortSignal): Promise<SecretScanResult>;
+	scan(content: string, filePath: string, signal?: AbortSignal): Promise<readonly unknown[]>;
 }
 
 export type SecretScannerFactory = (signal?: AbortSignal) => Promise<SecretScanner>;
@@ -73,101 +69,73 @@ const DEFAULT_SCANNER_TIMEOUT_MS = 15_000;
 const CONFLICT_MARKER = /^(?:<<<<<<<(?: .*)?|=======|>>>>>>>(?: .*)?)\r?$/m;
 
 export async function createRecommendedSecretScanner(): Promise<SecretScanner> {
-	let engine: Awaited<ReturnType<typeof createEngine>>;
+	let config: Awaited<ReturnType<typeof loadPackagesFromConfigDescriptor>>["config"];
 	try {
-		engine = await createEngine({
-			cwd: PACKAGE_ROOT,
-			color: false,
-			formatter: "json",
-			terminalLink: false,
-			maskSecrets: true,
-			configFileJSON: {
+		const loaded = await loadPackagesFromConfigDescriptor({
+			configDescriptor: {
 				rules: [{ id: "@secretlint/secretlint-rule-preset-recommend" }],
 			},
+			node_moduleDir: resolve(PACKAGE_ROOT, "node_modules"),
 		});
+		config = loaded.config;
 	} catch {
 		throw new SecretScannerFailure("configuration", "Secret scanner configuration failed.");
 	}
 	return Object.freeze({
-		async scan(content: string, filePath: string, signal?: AbortSignal): Promise<SecretScanResult> {
+		async scan(content: string, filePath: string, signal?: AbortSignal): Promise<readonly unknown[]> {
 			signal?.throwIfAborted();
 			try {
-				const result = await engine.executeOnContent({ content, filePath });
+				const result = await lintSource({
+					source: { filePath, content, ext: extname(filePath), contentType: "text" },
+					options: { config, maskSecrets: true },
+				});
 				signal?.throwIfAborted();
-				return result;
+				return result.messages;
 			} catch {
+				if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
 				throw new SecretScannerFailure("read", "Secret scanner could not scan an input.");
 			}
 		},
 	});
 }
 
-function withTimeout<T>(
-	operation: Promise<T>,
+async function withTimeout<T>(
+	operation: (signal: AbortSignal) => Promise<T>,
 	timeoutMs: number,
 	signal: AbortSignal | undefined,
 	phase: SecretScannerFailure["phase"],
 ): Promise<T> {
-	return new Promise((accept, reject) => {
-		let complete = false;
-		const finish = (callback: () => void) => {
-			if (complete) return;
-			complete = true;
-			clearTimeout(timeout);
-			signal?.removeEventListener("abort", onAbort);
-			callback();
-		};
-		const onAbort = () => finish(() => reject(signal?.reason ?? new DOMException("Aborted", "AbortError")));
-		const timeout = setTimeout(
-			() => finish(() => reject(new SecretScannerFailure("timeout", `Secret scanner ${phase} timed out.`))),
+	const linked = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
+	let timer: NodeJS.Timeout | undefined;
+	const timedOut = new Promise<never>((_accept, reject) => {
+		timer = setTimeout(
+			() => reject(new SecretScannerFailure("timeout", `Secret scanner ${phase} timed out.`)),
 			timeoutMs,
 		);
-		signal?.addEventListener("abort", onAbort, { once: true });
-		if (signal?.aborted) onAbort();
-		operation.then(
-			(value) => finish(() => accept(value)),
-			(error: unknown) => finish(() => reject(error)),
-		);
 	});
-}
-
-function lineFromMessage(message: Record<string, unknown>): number | undefined {
-	if (typeof message.line === "number") return message.line;
-	const location = message.loc;
-	if (!location || typeof location !== "object") return undefined;
-	const start = (location as { start?: unknown }).start;
-	if (!start || typeof start !== "object") return undefined;
-	const line = (start as { line?: unknown }).line;
-	return typeof line === "number" ? line : undefined;
-}
-
-function parseScannerOutput(output: string, path: string): readonly Readonly<SecretFinding>[] {
-	let records: unknown;
 	try {
-		records = JSON.parse(output);
-	} catch {
-		throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
+		return await Promise.race([operation(linked), timedOut]);
+	} catch (error) {
+		if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+		if (error instanceof SecretScannerFailure) throw error;
+		if (linked.aborted) throw new SecretScannerFailure("timeout", `Secret scanner ${phase} timed out.`);
+		throw error;
+	} finally {
+		clearTimeout(timer);
 	}
-	if (!Array.isArray(records)) throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
+}
+
+function scanFindings(messages: readonly unknown[], path: string): readonly Readonly<SecretFinding>[] {
+	if (!Array.isArray(messages)) throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
 	const findings: Readonly<SecretFinding>[] = [];
-	for (const record of records) {
-		if (!record || typeof record !== "object") {
+	for (const message of messages) {
+		const value = message as { ruleId?: unknown; messageId?: unknown; loc?: unknown } | null;
+		const type = typeof value?.ruleId === "string" ? value.ruleId : value?.messageId;
+		const line = (value?.loc as { start?: { line?: unknown } } | undefined)?.start?.line;
+		if (typeof type !== "string" || !Number.isSafeInteger(line) || (line as number) < 1) {
 			throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
 		}
-		const messages = (record as { messages?: unknown }).messages;
-		if (!Array.isArray(messages)) throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
-		for (const message of messages) {
-			if (!message || typeof message !== "object") {
-				throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
-			}
-			const value = message as Record<string, unknown>;
-			const type = typeof value.ruleId === "string" ? value.ruleId : value.messageId;
-			const line = lineFromMessage(value);
-			if (typeof type !== "string" || !Number.isSafeInteger(line) || (line ?? 0) < 1) {
-				throw new SecretScannerFailure("parse", "Secret scanner output was invalid.");
-			}
-			findings.push(Object.freeze({ type, path, line: line as number }));
-		}
+		findings.push(Object.freeze({ type, path, line: line as number }));
 	}
 	return Object.freeze(findings);
 }
@@ -214,10 +182,10 @@ async function scanInput(options: {
 	timeoutMs: number;
 	signal?: AbortSignal;
 }): Promise<readonly Readonly<SecretFinding>[]> {
-	let result: SecretScanResult;
+	let messages: readonly unknown[];
 	try {
-		result = await withTimeout(
-			options.scanner.scan(options.content, options.path, options.signal),
+		messages = await withTimeout(
+			(linked) => options.scanner.scan(options.content, options.path, linked),
 			options.timeoutMs,
 			options.signal,
 			"read",
@@ -226,11 +194,7 @@ async function scanInput(options: {
 		if (error instanceof SecretScannerFailure || (error instanceof Error && error.name === "AbortError")) throw error;
 		throw new SecretScannerFailure("read", "Secret scanner could not scan an input.");
 	}
-	const findings = parseScannerOutput(result.output, options.path);
-	if (!result.ok && findings.length === 0) {
-		throw new SecretScannerFailure("parse", "Secret scanner reported failure without valid findings.");
-	}
-	return findings;
+	return scanFindings(messages, options.path);
 }
 
 export async function validateStagedCandidate(
@@ -284,7 +248,7 @@ export async function validateStagedCandidate(
 	const factory = options.scannerFactory ?? createRecommendedSecretScanner;
 	let scanner: SecretScanner;
 	try {
-		scanner = await withTimeout(factory(options.signal), timeoutMs, options.signal, "startup");
+		scanner = await withTimeout((linked) => factory(linked), timeoutMs, options.signal, "startup");
 	} catch (error) {
 		if (error instanceof SecretScannerFailure || (error instanceof Error && error.name === "AbortError")) throw error;
 		throw new SecretScannerFailure("startup", "Secret scanner startup failed.");

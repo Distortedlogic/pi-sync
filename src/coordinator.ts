@@ -333,6 +333,236 @@ interface TransactionExecutionOptions {
 	writeState(state: StateDocument): Promise<void>;
 }
 
+interface ApplyStageState {
+	journal: OperationJournal;
+	publishedCommit: string;
+	backupId?: string;
+	publicationCompleted: boolean;
+}
+
+async function runApplyStages(
+	options: TransactionExecutionOptions,
+	currentState: Readonly<StateDocument>,
+	state: ApplyStageState,
+): Promise<TransactionSuccess> {
+	const plan = options.plan;
+	const hasMachineFiles = actionIdsForPhase(plan, "machine").length > 0;
+	const hasPackages = actionIdsForPhase(plan, "packages").length > 0;
+	const hasMachineEffects = hasMachineFiles || hasPackages;
+	let journal = { ...state.journal };
+	let backupId = state.backupId;
+	let nextState: StateDocument = { ...currentState };
+
+	const recoverApply = async (error: unknown, machineEffectsStarted: boolean): Promise<never> => {
+		let restored = !machineEffectsStarted;
+		let manualRecoveryPaths: readonly string[] = [];
+		if (machineEffectsStarted && backupId && options.steps.restoreMachine) {
+			try {
+				const result = await options.steps.restoreMachine({
+					plan,
+					sharedCommit: state.publishedCommit,
+					backupId,
+				});
+				restored = result.restored;
+				manualRecoveryPaths = result.manualRecoveryPaths ?? [];
+			} catch {
+				restored = false;
+			}
+		}
+		const recoveryState = buildRecoveryState({
+			current: currentState,
+			planId: plan.planId,
+			journal,
+			publishedCommit: state.publishedCommit,
+			backupId,
+			publicationCompleted: state.publicationCompleted,
+		});
+		try {
+			await options.writeState(recoveryState);
+		} catch (stateError) {
+			throw new TransactionRecoveryRequiredError(
+				"APPLY failed and recovery state could not be recorded. The durable journal was retained.",
+				{ publishedCommit: state.publishedCommit, backupId, restored, manualRecoveryPaths, cause: stateError },
+			);
+		}
+		throw new TransactionRecoveryRequiredError(
+			restored
+				? "APPLY failed. THIS MACHINE was restored and the exact shared commit is pending."
+				: "APPLY failed and THIS MACHINE needs manual recovery.",
+			{ publishedCommit: state.publishedCommit, backupId, restored, manualRecoveryPaths, cause: error },
+		);
+	};
+
+	while (journal.stage !== "complete") {
+		switch (journal.stage) {
+			case "shared_published": {
+				try {
+					if (hasMachineEffects) {
+						const backup = await options.steps.createAndVerifyBackup?.({ plan, signal: options.signal });
+						if (!backup) throw new Error("Verified backup was not created.");
+						validateBackupId(backup.backupId);
+						backupId = backup.backupId;
+					}
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "backup_verified",
+						plan,
+						patch: backupId ? { backupId } : undefined,
+						now: options.now,
+					});
+				} catch (error) {
+					return recoverApply(error, false);
+				}
+				break;
+			}
+			case "backup_verified": {
+				let machineEffectsStarted = false;
+				try {
+					if (hasPackages) {
+						machineEffectsStarted = true;
+						await options.steps.applyPackages?.({
+							plan,
+							sharedCommit: state.publishedCommit,
+							backupId: backupId as string,
+							signal: options.signal,
+						});
+						journal = await requireCurrentJournal(options.agentDirectory, plan.planId, "backup_verified");
+					}
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "packages_applied",
+						plan,
+						completedPhase: "packages",
+						now: options.now,
+					});
+				} catch (error) {
+					return recoverApply(error, machineEffectsStarted);
+				}
+				break;
+			}
+			case "packages_applied": {
+				let machineEffectsStarted = false;
+				try {
+					if (hasMachineFiles) {
+						machineEffectsStarted = true;
+						await options.steps.applyMachineFiles?.({
+							plan,
+							sharedCommit: state.publishedCommit,
+							backupId: backupId as string,
+							signal: options.signal,
+						});
+					}
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "machine_files_applied",
+						plan,
+						completedPhase: "machine",
+						now: options.now,
+					});
+				} catch (error) {
+					return recoverApply(error, machineEffectsStarted);
+				}
+				break;
+			}
+			case "machine_files_applied": {
+				try {
+					await options.steps.verifyFinalMachine({
+						plan,
+						sharedCommit: state.publishedCommit,
+						signal: options.signal,
+					});
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "final_verified",
+						plan,
+						now: options.now,
+					});
+				} catch (error) {
+					return recoverApply(error, false);
+				}
+				break;
+			}
+			case "final_verified": {
+				try {
+					await options.steps.restoreSecrets({
+						plan,
+						sharedCommit: state.publishedCommit,
+						signal: options.signal,
+					});
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "secrets_restored",
+						plan,
+						now: options.now,
+					});
+				} catch (error) {
+					throw new TransactionRecoveryRequiredError("Agent secret restore failed after managed file verification.", {
+						publishedCommit: state.publishedCommit,
+						backupId,
+						cause: error,
+					});
+				}
+				break;
+			}
+			case "secrets_restored": {
+				nextState = buildNextState(currentState, plan, state.publishedCommit, backupId, options.now());
+				try {
+					await options.writeState(nextState);
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "state_committed",
+						plan,
+						completedPhase: "state",
+						now: options.now,
+					});
+				} catch (error) {
+					throw new TransactionRecoveryRequiredError(
+						"APPLY verified, but baseline state or its journal could not be recorded. The durable journal was retained.",
+						{ publishedCommit: state.publishedCommit, backupId, cause: error },
+					);
+				}
+				break;
+			}
+			case "state_committed": {
+				try {
+					journal = await advanceJournal({
+						agentDirectory: options.agentDirectory,
+						journal,
+						next: "complete",
+						plan,
+						now: options.now,
+					});
+				} catch (error) {
+					throw new TransactionRecoveryRequiredError(
+						"Baseline state is durable, but journal completion failed. The durable journal was retained.",
+						{ publishedCommit: state.publishedCommit, backupId, cause: error },
+					);
+				}
+				break;
+			}
+			default:
+				throw new TransactionRecoveryRequiredError(`Journal stage ${journal.stage} cannot continue APPLY.`);
+		}
+		await options.onJournalStage?.(journal);
+	}
+
+	const receipt = createCompletionReceipt(plan, journal);
+	return {
+		status: "success",
+		planId: plan.planId,
+		publishedCommit: state.publishedCommit,
+		journal: Object.freeze({ ...journal }),
+		state: Object.freeze({ ...nextState }),
+		receipt,
+	};
+}
+
 async function resumeWithLock(
 	options: TransactionExecutionOptions,
 	currentState: Readonly<StateDocument>,
@@ -377,179 +607,12 @@ async function resumeWithLock(
 		throw new Error("Machine file APPLY step is missing.");
 	}
 
-	let journal = { ...initialJournal };
-	const recoverApply = async (error: unknown, machineEffectsStarted: boolean): Promise<never> => {
-		let restored = !machineEffectsStarted;
-		let manualRecoveryPaths: readonly string[] = [];
-		if (machineEffectsStarted && backupId && options.steps.restoreMachine) {
-			try {
-				const result = await options.steps.restoreMachine({
-					plan: options.plan,
-					sharedCommit: publishedCommit,
-					backupId,
-				});
-				restored = result.restored;
-				manualRecoveryPaths = result.manualRecoveryPaths ?? [];
-			} catch {
-				restored = false;
-			}
-		}
-		const recoveryState = buildRecoveryState({
-			current: currentState,
-			planId: options.plan.planId,
-			journal,
-			publishedCommit,
-			backupId,
-			publicationCompleted: actionIdsForPhase(options.plan, "shared").length > 0,
-		});
-		await options.writeState(recoveryState);
-		throw new TransactionRecoveryRequiredError(
-			restored
-				? "Resumed APPLY failed. THIS MACHINE was restored and the exact shared commit is pending."
-				: "Resumed APPLY failed and THIS MACHINE needs manual recovery.",
-			{ publishedCommit, backupId, restored, manualRecoveryPaths, cause: error },
-		);
-	};
-
-	if (journal.stage === "backup_verified") {
-		let machineEffectsStarted = false;
-		try {
-			if (hasPackages) {
-				machineEffectsStarted = true;
-				await options.steps.applyPackages?.({
-					plan: options.plan,
-					sharedCommit: publishedCommit,
-					backupId: backupId as string,
-					signal: options.signal,
-				});
-				journal = await requireCurrentJournal(options.agentDirectory, options.plan.planId, "backup_verified");
-			}
-			journal = await advanceJournal({
-				agentDirectory: options.agentDirectory,
-				journal,
-				next: "packages_applied",
-				plan: options.plan,
-				completedPhase: "packages",
-				now: options.now,
-			});
-		} catch (error) {
-			return recoverApply(error, machineEffectsStarted);
-		}
-		await options.onJournalStage?.(journal);
-	}
-
-	if (journal.stage === "packages_applied") {
-		let machineEffectsStarted = false;
-		try {
-			if (hasMachineFiles) {
-				machineEffectsStarted = true;
-				await options.steps.applyMachineFiles?.({
-					plan: options.plan,
-					sharedCommit: publishedCommit,
-					backupId: backupId as string,
-					signal: options.signal,
-				});
-			}
-			journal = await advanceJournal({
-				agentDirectory: options.agentDirectory,
-				journal,
-				next: "machine_files_applied",
-				plan: options.plan,
-				completedPhase: "machine",
-				now: options.now,
-			});
-		} catch (error) {
-			return recoverApply(error, machineEffectsStarted);
-		}
-		await options.onJournalStage?.(journal);
-	}
-
-	if (journal.stage === "machine_files_applied") {
-		try {
-			await options.steps.verifyFinalMachine({
-				plan: options.plan,
-				sharedCommit: publishedCommit,
-				signal: options.signal,
-			});
-			journal = await advanceJournal({
-				agentDirectory: options.agentDirectory,
-				journal,
-				next: "final_verified",
-				plan: options.plan,
-				now: options.now,
-			});
-		} catch (error) {
-			return recoverApply(error, false);
-		}
-		await options.onJournalStage?.(journal);
-	}
-
-	if (journal.stage === "final_verified") {
-		try {
-			await options.steps.restoreSecrets({
-				plan: options.plan,
-				sharedCommit: publishedCommit,
-				signal: options.signal,
-			});
-			journal = await advanceJournal({
-				agentDirectory: options.agentDirectory,
-				journal,
-				next: "secrets_restored",
-				plan: options.plan,
-				now: options.now,
-			});
-		} catch (error) {
-			throw new TransactionRecoveryRequiredError("Agent secret restore failed after managed file verification.", {
-				publishedCommit,
-				backupId,
-				cause: error,
-			});
-		}
-		await options.onJournalStage?.(journal);
-	}
-
-	let nextState: StateDocument = { ...currentState };
-	if (journal.stage === "secrets_restored") {
-		nextState = buildNextState(currentState, options.plan, publishedCommit, backupId, options.now());
-		try {
-			await options.writeState(nextState);
-			journal = await advanceJournal({
-				agentDirectory: options.agentDirectory,
-				journal,
-				next: "state_committed",
-				plan: options.plan,
-				completedPhase: "state",
-				now: options.now,
-			});
-		} catch (error) {
-			throw new TransactionRecoveryRequiredError(
-				"Resumed APPLY verified, but baseline state or its journal could not be recorded.",
-				{ publishedCommit, backupId, cause: error },
-			);
-		}
-		await options.onJournalStage?.(journal);
-	}
-
-	if (journal.stage === "state_committed") {
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "complete",
-			plan: options.plan,
-			now: options.now,
-		});
-		await options.onJournalStage?.(journal);
-	}
-
-	const receipt = createCompletionReceipt(options.plan, journal);
-	return {
-		status: "success",
-		planId: options.plan.planId,
+	return runApplyStages(options, currentState, {
+		journal: initialJournal,
 		publishedCommit,
-		journal: Object.freeze({ ...journal }),
-		state: Object.freeze({ ...nextState }),
-		receipt,
-	};
+		backupId,
+		publicationCompleted: actionIdsForPhase(options.plan, "shared").length > 0,
+	});
 }
 
 async function executeWithLock(options: TransactionExecutionOptions): Promise<TransactionSuccess> {
@@ -674,218 +737,7 @@ async function executeWithLock(options: TransactionExecutionOptions): Promise<Tr
 	}
 	await options.onJournalStage?.(journal);
 
-	let backupId: string | undefined;
-	const recoverApply = async (error: unknown, machineEffectsStarted: boolean): Promise<never> => {
-		let restored = !machineEffectsStarted;
-		let manualRecoveryPaths: readonly string[] = [];
-		if (machineEffectsStarted && backupId) {
-			try {
-				const result = await options.steps.restoreMachine?.({
-					plan: options.plan,
-					sharedCommit: publishedCommit,
-					backupId,
-				});
-				restored = result?.restored === true;
-				manualRecoveryPaths = result?.manualRecoveryPaths ?? [];
-			} catch {
-				restored = false;
-			}
-		}
-		const recoveryState = buildRecoveryState({
-			current: currentState,
-			planId: options.plan.planId,
-			journal,
-			publishedCommit,
-			backupId,
-			publicationCompleted,
-		});
-		try {
-			await options.writeState(recoveryState);
-		} catch (stateError) {
-			throw new TransactionRecoveryRequiredError(
-				"APPLY failed and recovery state could not be recorded. The durable journal was retained.",
-				{
-					publishedCommit,
-					backupId,
-					restored,
-					manualRecoveryPaths,
-					cause: stateError,
-				},
-			);
-		}
-		throw new TransactionRecoveryRequiredError(
-			restored
-				? "APPLY failed. THIS MACHINE was restored and the exact shared commit is pending."
-				: "APPLY failed and THIS MACHINE needs manual recovery.",
-			{
-				publishedCommit,
-				backupId,
-				restored,
-				manualRecoveryPaths,
-				cause: error,
-			},
-		);
-	};
-
-	try {
-		if (hasMachineEffects) {
-			const backup = await options.steps.createAndVerifyBackup?.({ plan: options.plan, signal: options.signal });
-			if (!backup) throw new Error("Verified backup was not created.");
-			validateBackupId(backup.backupId);
-			backupId = backup.backupId;
-		}
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "backup_verified",
-			plan: options.plan,
-			patch: backupId ? { backupId } : undefined,
-			now: options.now,
-		});
-	} catch (error) {
-		return recoverApply(error, false);
-	}
-	await options.onJournalStage?.(journal);
-
-	let machineEffectsStarted = false;
-	try {
-		if (hasPackages) {
-			machineEffectsStarted = true;
-			await options.steps.applyPackages?.({
-				plan: options.plan,
-				sharedCommit: publishedCommit,
-				backupId: backupId as string,
-				signal: options.signal,
-			});
-			journal = await requireCurrentJournal(options.agentDirectory, options.plan.planId, "backup_verified");
-		}
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "packages_applied",
-			plan: options.plan,
-			completedPhase: "packages",
-			now: options.now,
-		});
-	} catch (error) {
-		return recoverApply(error, machineEffectsStarted);
-	}
-	await options.onJournalStage?.(journal);
-
-	try {
-		if (hasMachineFiles) {
-			machineEffectsStarted = true;
-			await options.steps.applyMachineFiles?.({
-				plan: options.plan,
-				sharedCommit: publishedCommit,
-				backupId: backupId as string,
-				signal: options.signal,
-			});
-		}
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "machine_files_applied",
-			plan: options.plan,
-			completedPhase: "machine",
-			now: options.now,
-		});
-	} catch (error) {
-		return recoverApply(error, machineEffectsStarted);
-	}
-	await options.onJournalStage?.(journal);
-
-	try {
-		await options.steps.verifyFinalMachine({
-			plan: options.plan,
-			sharedCommit: publishedCommit,
-			signal: options.signal,
-		});
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "final_verified",
-			plan: options.plan,
-			now: options.now,
-		});
-	} catch (error) {
-		return recoverApply(error, machineEffectsStarted);
-	}
-	await options.onJournalStage?.(journal);
-
-	try {
-		await options.steps.restoreSecrets({
-			plan: options.plan,
-			sharedCommit: publishedCommit,
-			signal: options.signal,
-		});
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "secrets_restored",
-			plan: options.plan,
-			now: options.now,
-		});
-	} catch (error) {
-		throw new TransactionRecoveryRequiredError("Agent secret restore failed after managed file verification.", {
-			publishedCommit,
-			backupId,
-			cause: error,
-		});
-	}
-	await options.onJournalStage?.(journal);
-
-	const nextState = buildNextState(currentState, options.plan, publishedCommit, backupId, options.now());
-	try {
-		await options.writeState(nextState);
-	} catch (error) {
-		throw new TransactionRecoveryRequiredError(
-			"Final APPLY verification passed, but baseline state could not be recorded. The durable journal was retained.",
-			{ publishedCommit, backupId, cause: error },
-		);
-	}
-	try {
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "state_committed",
-			plan: options.plan,
-			completedPhase: "state",
-			now: options.now,
-		});
-	} catch (error) {
-		throw new TransactionRecoveryRequiredError(
-			"Baseline state is durable, but its journal update failed. The durable journal was retained.",
-			{ publishedCommit, backupId, cause: error },
-		);
-	}
-	await options.onJournalStage?.(journal);
-
-	try {
-		journal = await advanceJournal({
-			agentDirectory: options.agentDirectory,
-			journal,
-			next: "complete",
-			plan: options.plan,
-			now: options.now,
-		});
-	} catch (error) {
-		throw new TransactionRecoveryRequiredError(
-			"Baseline state is durable, but journal completion failed. The durable journal was retained.",
-			{ publishedCommit, backupId, cause: error },
-		);
-	}
-	await options.onJournalStage?.(journal);
-
-	const receipt = createCompletionReceipt(options.plan, journal);
-	return {
-		status: "success",
-		planId: options.plan.planId,
-		publishedCommit,
-		journal: Object.freeze({ ...journal }),
-		state: Object.freeze({ ...nextState }),
-		receipt,
-	};
+	return runApplyStages(options, currentState, { journal, publishedCommit, publicationCompleted });
 }
 
 export async function executeConfirmedTransaction(options: {

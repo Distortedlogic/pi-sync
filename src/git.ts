@@ -58,32 +58,13 @@ export type PublishCandidateResult =
 export const LAST_NAMED_SNAPSHOT_REF = "refs/pi-sync/snapshots/last-reviewed";
 const LAST_CANDIDATE_REF = "refs/pi-sync/candidates/last";
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
-const COMMIT_PATTERN = /^[a-f0-9]{40,64}$/;
 const PLAN_ID_PATTERN = /^[a-f0-9]{64}$/;
-const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 export class GitOperationError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
 		this.name = "GitOperationError";
 	}
-}
-
-function validateBranch(branch: string): void {
-	if (
-		!BRANCH_PATTERN.test(branch) ||
-		branch.includes("..") ||
-		branch.includes("@{") ||
-		branch.endsWith("/") ||
-		branch.endsWith(".") ||
-		branch.endsWith(".lock")
-	) {
-		throw new GitOperationError("SHARED REPOSITORY branch name is invalid.");
-	}
-}
-
-function validateCommit(commit: string, label: string): void {
-	if (!COMMIT_PATTERN.test(commit)) throw new GitOperationError(`${label} is not a valid commit ID.`);
 }
 
 function validatePlanId(planId: string): void {
@@ -197,7 +178,6 @@ async function ensureWorkspace(
 	repository: RepositoryConfig,
 	signal?: AbortSignal,
 ): Promise<{ workspace: Readonly<GitWorkspace>; doctor?: Readonly<GitDoctorResult> }> {
-	validateBranch(repository.branch);
 	const paths = await ensureConfigSyncDirectories(agentDirectory);
 	const workspace = workspaceFor(agentDirectory, repository.branch);
 	const existing = await pathDetails(workspace.repositoryDirectory);
@@ -241,9 +221,7 @@ async function fetchBranchCommit(
 		"Fetched commit resolution",
 		{ signal },
 	);
-	const commit = result.stdout.trim();
-	validateCommit(commit, "Fetched SHARED REPOSITORY commit");
-	return commit;
+	return result.stdout.trim();
 }
 
 export async function inspectSetupRepository(options: {
@@ -252,7 +230,6 @@ export async function inspectSetupRepository(options: {
 	repository: RepositoryConfig;
 	signal?: AbortSignal;
 }): Promise<Readonly<SetupRepositoryInspection>> {
-	validateBranch(options.repository.branch);
 	const paths = await ensureConfigSyncDirectories(options.agentDirectory);
 	const workspace = workspaceFor(options.agentDirectory, options.repository.branch);
 	const existing = await pathDetails(workspace.repositoryDirectory);
@@ -300,7 +277,6 @@ export async function inspectSetupRepository(options: {
 		throw new GitOperationError("SHARED REPOSITORY is not empty and its configured branch has no valid manifest.");
 	}
 	const sharedCommit = branchEntry[0];
-	validateCommit(sharedCommit, "Inspected SHARED REPOSITORY commit");
 	const setupRef = "refs/pi-sync/setup/inspected";
 	await executeGit(
 		options.exec,
@@ -448,9 +424,7 @@ async function resolveCommit(
 		"Commit resolution",
 		{ signal },
 	);
-	const commit = result.stdout.trim();
-	validateCommit(commit, "Resolved commit");
-	return commit;
+	return result.stdout.trim();
 }
 
 export async function createCandidateCommit(options: {
@@ -463,7 +437,6 @@ export async function createCandidateCommit(options: {
 	signal?: AbortSignal;
 }): Promise<Readonly<CandidateCommit>> {
 	validatePlanId(options.planId);
-	validateCommit(options.snapshot.sharedCommit, "Reviewed SHARED REPOSITORY commit");
 	const reviewedRefCommit = await resolveCommit(
 		options.exec,
 		options.snapshot.workspace,
@@ -610,8 +583,6 @@ export async function publishCandidateCommit(options: {
 	candidate: Readonly<CandidateCommit>;
 	signal?: AbortSignal;
 }): Promise<PublishCandidateResult> {
-	validateCommit(options.candidate.reviewedSharedCommit, "Reviewed SHARED REPOSITORY commit");
-	validateCommit(options.candidate.candidateCommit, "Candidate commit");
 	const candidateCommit = await resolveCommit(
 		options.exec,
 		options.candidate.workspace,
@@ -630,10 +601,6 @@ export async function publishCandidateCommit(options: {
 		throw new GitOperationError("Candidate parent does not match the reviewed commit.");
 	}
 
-	const currentSharedCommit = await fetchBranchCommit(options.exec, options.candidate.workspace, options.signal);
-	if (currentSharedCommit !== options.candidate.reviewedSharedCommit) {
-		return planExpired(options.candidate, currentSharedCommit);
-	}
 	const push = await executeGit(
 		options.exec,
 		options.candidate.workspace,
@@ -659,7 +626,6 @@ export async function diffFromLastNamedSnapshot(options: {
 	signal?: AbortSignal;
 	refresh?: { agentDirectory: string; repository: RepositoryConfig };
 }): Promise<{ baseCommit: string; diff: string }> {
-	validateCommit(options.targetCommit, "Diff target commit");
 	let workspace = options.workspace;
 	if (options.refresh) {
 		const refreshed = await fetchSharedSnapshot({
