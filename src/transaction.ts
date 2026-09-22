@@ -332,7 +332,7 @@ async function verifyMachineTree(options: {
 		const details = await pathDetails(options.operations, absolutePath);
 		if (!details?.isFile()) throw new MachineApplyError(`Final machine file is unavailable: ${path}`);
 		const content = await options.operations.readFile(absolutePath);
-		if (hash(content) !== file.sha256 || portableExecutableBit(details.mode) !== file.executable) {
+		if (hash("sha256", content, "hex") !== file.sha256 || portableExecutableBit(details.mode) !== file.executable) {
 			throw new MachineApplyError(`Final machine verification failed: ${path}`);
 		}
 	}
