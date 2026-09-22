@@ -7,6 +7,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	type ExtensionContext,
+	getAgentDir,
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
@@ -50,7 +51,6 @@ import {
 	detectIncompleteJournal,
 	executeRestorePlan,
 	formatRecoveryNotice,
-	getActiveAgentDirectory,
 	type IncompleteJournal,
 	listMachineBackups,
 	requestRecoveryDecision,
@@ -316,7 +316,7 @@ async function loadPlanInputs(options: {
 	createdAt?: string;
 	remoteCheckedAt?: string;
 }): Promise<PlanInputs> {
-	const agentDirectory = getActiveAgentDirectory();
+	const agentDirectory = getAgentDir();
 	const piDirectory = dirname(agentDirectory);
 	options.reporter.update("PREPARING", "Reading configuration and baseline state");
 	const [config, state] = await Promise.all([loadConfig(agentDirectory), loadState(agentDirectory)]);
@@ -816,7 +816,7 @@ async function runSyncCommand(options: {
 	const resourcesChanged = await runWithProgress({
 		ctx: options.ctx,
 		operation: async (reporter): Promise<boolean> => {
-			const agentDirectory = getActiveAgentDirectory();
+			const agentDirectory = getAgentDir();
 			const persistedPlan = options.suppliedPlanId
 				? await loadPlanArtifact(agentDirectory, options.suppliedPlanId)
 				: undefined;
@@ -927,7 +927,7 @@ async function runRestoreCommand(options: {
 	const resourcesChanged = await runWithProgress({
 		ctx: options.ctx,
 		operation: async (reporter): Promise<boolean> => {
-			const agentDirectory = getActiveAgentDirectory();
+			const agentDirectory = getAgentDir();
 			const piDirectory = dirname(agentDirectory);
 			let backupId = options.backupId;
 			if (!backupId) {
@@ -981,7 +981,7 @@ async function runRestoreCommand(options: {
 }
 
 async function runDoctor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
-	const config = await loadConfig(getActiveAgentDirectory());
+	const config = await loadConfig(getAgentDir());
 	if (!config) {
 		ctx.ui.notify("Configuration is missing. THIS MACHINE and SHARED REPOSITORY were not changed.", "warning");
 		appendResult(pi, { kind: "doctor", status: "configuration_missing" });
@@ -989,7 +989,7 @@ async function runDoctor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promis
 	}
 	const inspected = await inspectSetupRepository({
 		exec: pi.exec,
-		agentDirectory: getActiveAgentDirectory(),
+		agentDirectory: getAgentDir(),
 		repository: config.repository,
 	});
 	ctx.ui.notify(
@@ -1046,7 +1046,7 @@ async function runResumeCommand(options: {
 	const resourcesChanged = await runWithProgress({
 		ctx: options.ctx,
 		operation: async (reporter): Promise<boolean> => {
-			const agentDirectory = getActiveAgentDirectory();
+			const agentDirectory = getAgentDir();
 			const plan = await loadPlanArtifact(agentDirectory, options.recovery.planId);
 			if (!plan) throw new Error("The recorded recovery plan is unavailable.");
 			const inputs = await loadPlanInputs({
@@ -1080,7 +1080,7 @@ async function runResumeCommand(options: {
 }
 
 async function runRecovery(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
-	const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
+	const recovery = await detectIncompleteJournal(getAgentDir());
 	const result = await requestRecoveryDecision({ ctx, recovery });
 	if (result.status !== "selected") {
 		if (recovery) appendResult(pi, { kind: "recovery_required", planId: recovery.planId, stage: recovery.stage });
@@ -1102,7 +1102,7 @@ async function updateFooterStatus(options: {
 	ctx: ExtensionContext;
 	isCurrent(): boolean;
 }): Promise<FooterStatus> {
-	const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
+	const recovery = await detectIncompleteJournal(getAgentDir());
 	if (recovery) {
 		const status: FooterStatus = { freshness: "fresh", text: "Config sync: recovery required" };
 		if (options.isCurrent()) options.ctx.ui.setStatus("config-sync", status.text);
@@ -1126,7 +1126,7 @@ async function updateFooterStatus(options: {
 		if (options.isCurrent()) options.ctx.ui.setStatus("config-sync", status.text);
 		return status;
 	} catch {
-		const latestRecovery = await detectIncompleteJournal(getActiveAgentDirectory());
+		const latestRecovery = await detectIncompleteJournal(getAgentDir());
 		const status: FooterStatus = latestRecovery
 			? { freshness: "fresh", text: "Config sync: recovery required" }
 			: { freshness: "unknown", text: "Config sync: remote status unknown" };
@@ -1139,7 +1139,7 @@ export function registerConfigSyncCommands(pi: ExtensionAPI): void {
 	let statusGeneration = 0;
 	pi.on("session_start", async (_event, ctx) => {
 		const currentGeneration = ++statusGeneration;
-		const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
+		const recovery = await detectIncompleteJournal(getAgentDir());
 		if (recovery) ctx.ui.notify(formatRecoveryNotice(recovery), "warning");
 		await updateFooterStatus({
 			pi,
@@ -1162,7 +1162,7 @@ export function registerConfigSyncCommands(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			try {
 				const requestedCommand = args.trim().split(/\s+/, 1)[0];
-				if (requestedCommand !== "recover" && (await detectIncompleteJournal(getActiveAgentDirectory()))) {
+				if (requestedCommand !== "recover" && (await detectIncompleteJournal(getAgentDir()))) {
 					if (await runRecovery(pi, ctx)) {
 						await ctx.reload();
 						return;
@@ -1225,7 +1225,7 @@ export function registerConfigSyncCommands(pi: ExtensionAPI): void {
 						return;
 				}
 			} catch (error) {
-				const recovery = await detectIncompleteJournal(getActiveAgentDirectory());
+				const recovery = await detectIncompleteJournal(getAgentDir());
 				if (recovery) ctx.ui.setStatus("config-sync", "Config sync: recovery required");
 				ctx.ui.notify(error instanceof Error ? error.message : "Configuration synchronization failed.", "error");
 				appendResult(pi, {

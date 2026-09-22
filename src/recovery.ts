@@ -1,7 +1,6 @@
 import { hash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import stableStringify from "json-stable-stringify";
@@ -82,13 +81,6 @@ export class RestorePlanExpiredError extends Error {
 		super("PLAN EXPIRED: The restore plan no longer matches THIS MACHINE or its verified backup.");
 		this.name = "RestorePlanExpiredError";
 	}
-}
-
-export function getActiveAgentDirectory(
-	environment: { PI_CODING_AGENT_DIR?: string } = process.env,
-	homeDirectory = homedir(),
-): string {
-	return resolve(environment.PI_CODING_AGENT_DIR ?? resolve(homeDirectory, ".pi", "agent"));
 }
 
 export function formatRecoveryNotice(recovery: Readonly<IncompleteJournal>): string {
