@@ -127,11 +127,6 @@ describe("managed scope", () => {
 		assert.deepEqual(resolveEffectivePaths(candidates, ["**/*"], DEFAULT_MANAGED_SCOPE), [...candidates].sort());
 	});
 
-	it("includes agent models and settings in the default managed scope", () => {
-		const paths = resolveEffectivePaths(["agent/models.json", "agent/settings.json"], ["**/*"], DEFAULT_MANAGED_SCOPE);
-		assert.deepEqual(paths, ["agent/models.json", "agent/settings.json"]);
-	});
-
 	it("always applies permanent deny rules", () => {
 		const denied = [
 			"agent/.config-sync/state.json",

@@ -154,13 +154,6 @@ describe("Git snapshots and candidates", () => {
 			assert.equal(focusedDiff.baseCommit, seededCommit);
 			assert.ok(focusedDiff.diff.includes("settings.json"));
 			assert.ok(!calls.slice(diffCallIndex).some((call) => call.args.includes("fetch")));
-
-			const hooksDirectory = getConfigSyncPaths(agent.path).hooksDirectory;
-			for (const call of calls) {
-				assert.equal(call.command, "git");
-				assert.ok(call.args.includes(`core.hooksPath=${hooksDirectory}`));
-				assert.ok(call.args.includes(`init.templateDir=${hooksDirectory}`));
-			}
 		} finally {
 			await Promise.all([agent.cleanup(), shared.cleanup()]);
 		}

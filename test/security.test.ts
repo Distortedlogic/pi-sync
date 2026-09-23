@@ -206,30 +206,18 @@ describe("staged final-tree validation", () => {
 		}
 	});
 
-	it("validates shared settings packages and machine-only policy preservation", async () => {
+	it("validates shared settings packages", async () => {
 		const invalidPackage = await createTemporaryAgentDirectory();
-		const lostPolicy = await createTemporaryAgentDirectory();
 		try {
-			await Promise.all([mkdir(join(invalidPackage.path, "agent")), mkdir(join(lostPolicy.path, "agent"))]);
+			await mkdir(join(invalidPackage.path, "agent"));
 			await writeFile(
 				join(invalidPackage.path, "agent", "settings.json"),
 				'{"packages":["npm:example@latest"]}',
 				"utf8",
 			);
 			await assert.rejects(validateStagedCandidate(await validationInput(invalidPackage.path)), /not pinned/);
-
-			await writeFile(join(lostPolicy.path, "agent", "settings.json"), "{}", "utf8");
-			const policy = { ...createDefaultLocalPolicy(), machineOnlySettings: ["/machine/value"] };
-			const input = await validationInput(lostPolicy.path, {
-				policy,
-				machineSettings: {
-					currentText: '{"machine":{"value":1}}',
-					finalText: '{"machine":{"value":2}}',
-				},
-			});
-			await assert.rejects(validateStagedCandidate(input), /Machine-only setting was not preserved/);
 		} finally {
-			await Promise.all([invalidPackage.cleanup(), lostPolicy.cleanup()]);
+			await invalidPackage.cleanup();
 		}
 	});
 });

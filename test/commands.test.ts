@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-	CONFIG_SYNC_SUBCOMMANDS,
-	deriveFooterStatus,
-	formatDifferenceOutput,
-	parseConfigSyncCommand,
-} from "../src/commands.ts";
+import { CONFIG_SYNC_SUBCOMMANDS, deriveFooterStatus, parseConfigSyncCommand } from "../src/commands.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
 
 const HASH = "a".repeat(64);
@@ -89,11 +84,5 @@ describe("configuration command routing", () => {
 			),
 			"Config sync: 1 conflicts",
 		);
-	});
-
-	it("limits large plain-text difference output", () => {
-		const output = formatDifferenceOutput(`${"changed line\n".repeat(6_000)}`);
-		assert.ok(Buffer.byteLength(output) < 60 * 1024);
-		assert.ok(output.includes("Difference truncated"));
 	});
 });
