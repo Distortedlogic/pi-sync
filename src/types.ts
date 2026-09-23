@@ -159,7 +159,6 @@ export const PlanArtifactActionSchema = Type.Object(
 		codeExecution: Type.Boolean(),
 		destination: PlanDestinationSchema,
 		direction: PlanDirectionSchema,
-		bestEffort: Type.Optional(Type.Boolean()),
 		exactPackageSource: Type.Optional(Type.String({ minLength: 1 })),
 		finalResult: Type.String({ minLength: 1 }),
 		normalizedPackageSource: Type.Optional(Type.String({ minLength: 1 })),
@@ -240,7 +239,6 @@ export const PackageJournalEventSchema = Type.Object(
 		status: Type.Union([
 			Type.Literal("started"),
 			Type.Literal("completed"),
-			Type.Literal("best_effort_failed"),
 			Type.Literal("rollback_started"),
 			Type.Literal("rolled_back"),
 			Type.Literal("rollback_failed"),

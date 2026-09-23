@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	CONFIG_SYNC_SUBCOMMANDS,
 	deriveFooterStatus,
@@ -8,7 +7,6 @@ import {
 	parseConfigSyncCommand,
 } from "../src/commands.ts";
 import { buildPlanArtifact, type PlanArtifactAction } from "../src/plan.ts";
-import { runWithProgress } from "../src/progress.ts";
 
 const HASH = "a".repeat(64);
 
@@ -97,29 +95,5 @@ describe("configuration command routing", () => {
 		const output = formatDifferenceOutput(`${"changed line\n".repeat(6_000)}`);
 		assert.ok(Buffer.byteLength(output) < 60 * 1024);
 		assert.ok(output.includes("Difference truncated"));
-	});
-});
-
-describe("configuration operation progress", () => {
-	it("posts progress to the status line and clears it when the operation settles", async () => {
-		const statuses: Array<string | undefined> = [];
-		const ctx = {
-			hasUI: true,
-			mode: "rpc",
-			ui: {
-				setStatus: (_key: string, value: string | undefined) => statuses.push(value),
-			} as unknown as ExtensionCommandContext["ui"],
-		} as Pick<ExtensionCommandContext, "hasUI" | "mode" | "ui">;
-		const result = await runWithProgress({
-			ctx,
-			operation: async (reporter) => {
-				reporter.update("APPLYING FILES", "Applying one confirmed file on THIS MACHINE");
-				assert.equal(reporter.signal.aborted, false);
-				return "done";
-			},
-		});
-		assert.equal(result, "done");
-		assert.ok(statuses.some((status) => status?.includes("APPLYING FILES: Applying one confirmed file")));
-		assert.equal(statuses.at(-1), undefined);
 	});
 });

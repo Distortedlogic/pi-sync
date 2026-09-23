@@ -409,7 +409,7 @@ function buildPreparedSync(inputs: PlanInputs, mode: SyncMode, decisions: readon
 				operation: rawPackagePlan.actions[index].operation,
 				exactSource: rawPackagePlan.actions[index].exactSource,
 				previousExactSource: rawPackagePlan.actions[index].previousExactSource,
-				approved: selected?.choice === "approve" || selected?.choice === "approve_and_remember" || !selected,
+				approved: selected?.choice === "approve" || !selected,
 			};
 		});
 		const settingsPlan = createApplySettingsPlan({
@@ -556,10 +556,7 @@ function decisionRequirements(prepared: Readonly<PreparedSync>): DecisionRequire
 				category: "package",
 				id: packageActionDecisionId(action),
 				message: `${action.action}: ${action.path} from exact source ${action.exactPackageSource}`,
-				choices: [
-					{ id: "approve", label: "APPROVE THIS EXACT PACKAGE ACTION" },
-					{ id: "approve_and_remember", label: "APPROVE AND REMEMBER THIS EXACT PACKAGE SOURCE" },
-				],
+				choices: [{ id: "approve", label: "APPROVE THIS EXACT PACKAGE ACTION" }],
 				exactSource: action.exactPackageSource,
 				normalizedSource: action.normalizedPackageSource,
 				previousExactSource: action.previousExactPackageSource,

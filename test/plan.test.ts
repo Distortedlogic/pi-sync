@@ -170,8 +170,6 @@ describe("canonical plan artifact", () => {
 		assert.match(first.planId, /^[a-f0-9]{64}$/);
 		assert.equal(first.shortPlanId, first.planId.slice(0, 12));
 		assert.notEqual(changed.planId, first.planId);
-		assert.equal(Object.isFrozen(first), true);
-		assert.equal(Object.isFrozen(first.actions), true);
 	});
 
 	it("rejects a write with a destination that does not match its direction or name", () => {

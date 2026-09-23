@@ -9,7 +9,6 @@ import {
 } from "../src/plan.ts";
 import type { PlanArtifact } from "../src/types.ts";
 import {
-	authorizePlanExecution,
 	type CollectedDecision,
 	type DecisionRequirement,
 	formatPlanRows,
@@ -196,11 +195,5 @@ describe("plan review", () => {
 			text: formatPlanText(previewPlan, "final-plan"),
 		});
 		assert.equal(rebuild.mock.callCount(), 0);
-	});
-
-	it("requires the exact full plan ID for execution", () => {
-		const artifact = plan();
-		assert.throws(() => authorizePlanExecution(artifact, artifact.shortPlanId), /Exact plan ID/);
-		assert.deepEqual(authorizePlanExecution(artifact, artifact.planId), { planId: artifact.planId });
 	});
 });

@@ -355,7 +355,6 @@ function artifactEffect(effect: PlanEffect): Readonly<PlanEffect> {
 function securityAction(action: Readonly<PlanArtifactAction>): Record<string, unknown> {
 	return {
 		action: action.action,
-		bestEffort: action.bestEffort ?? false,
 		codeExecution: action.codeExecution,
 		destination: action.destination,
 		direction: action.direction,

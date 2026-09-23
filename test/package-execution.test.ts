@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import type { ExecResult } from "@earendil-works/pi-coding-agent";
 import { createDefaultLocalPolicy } from "../src/config.ts";
 import {
@@ -24,8 +24,6 @@ interface ActionSpec {
 	identity: string;
 	exactSource: string;
 	previousExactSource?: string;
-	bestEffort?: boolean;
-	choice?: "approve" | "approve_and_remember";
 }
 
 interface PackageFixture {
@@ -48,7 +46,6 @@ function planAction(spec: ActionSpec): PlanArtifactAction {
 	const removal = spec.operation === "remove";
 	return {
 		action: removal ? "REMOVE PACKAGE FROM THIS MACHINE" : "INSTALL PACKAGE ON THIS MACHINE",
-		bestEffort: spec.bestEffort,
 		codeExecution: true,
 		destination: "THIS MACHINE",
 		direction: "shared-to-machine",
@@ -80,9 +77,9 @@ function packageFixture(
 	const actions = specs.map(planAction);
 	const decisions =
 		overrides.decisions ??
-		actions.map((action, index) => ({
+		actions.map((action) => ({
 			category: "package" as const,
-			choice: specs[index]?.choice ?? "approve",
+			choice: "approve",
 			exactSource: action.exactPackageSource,
 			id: packageActionDecisionId(action),
 			normalizedSource: action.normalizedPackageSource,
@@ -145,7 +142,6 @@ async function execute(options: {
 	fixture: PackageFixture;
 	exec: PackageExec;
 	signal?: AbortSignal;
-	rememberApprovals?: (sources: readonly string[]) => Promise<void>;
 }) {
 	return executeConfirmedPackagePlan({
 		exec: options.exec,
@@ -159,7 +155,6 @@ async function execute(options: {
 		signal: options.signal,
 		timeoutMs: 5_000,
 		now: () => "2026-01-01T00:00:02.000Z",
-		rememberApprovals: options.rememberApprovals,
 	});
 }
 
@@ -172,12 +167,7 @@ describe("approved package execution", () => {
 			["npm:remove@1.0.0", "npm:update@1.0.0", "file:../machine-only"],
 			["npm:update@2.0.0", "npm:install@1.0.0", "file:../machine-only"],
 			[
-				{
-					operation: "install",
-					identity: "npm:install",
-					exactSource: "npm:install@1.0.0",
-					choice: "approve_and_remember",
-				},
+				{ operation: "install", identity: "npm:install", exactSource: "npm:install@1.0.0" },
 				{
 					operation: "update",
 					identity: "npm:update",
@@ -188,10 +178,9 @@ describe("approved package execution", () => {
 			],
 		);
 		const exec = createExec(calls);
-		const rememberApprovals = mock.fn(async (_sources: readonly string[]) => {});
 		try {
 			await prepareExecution(agentDirectory, fixture);
-			const result = await execute({ agentDirectory, fixture, exec, rememberApprovals });
+			const result = await execute({ agentDirectory, fixture, exec });
 			assert.deepEqual(
 				calls.map(({ command, args }) => [command, ...args]),
 				[
@@ -204,7 +193,6 @@ describe("approved package execution", () => {
 			assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.plannedSettingsText);
 			const finalSettings = parseSettings(fixture.plannedSettingsText, { source: "machine", policy: fixture.policy });
 			assert.equal(packageSetFingerprint(finalSettings.packages), fixture.plan.packageFingerprint);
-			assert.deepEqual(rememberApprovals.mock.calls[0]?.arguments, [["npm:install@1.0.0"]]);
 		} finally {
 			await temporary.cleanup();
 		}
@@ -272,47 +260,6 @@ describe("approved package execution", () => {
 		}
 	});
 
-	it("treats removal failure as failure unless the confirmed action is best effort", async () => {
-		const requiredRoot = await createTemporaryAgentDirectory();
-		const bestEffortRoot = await createTemporaryAgentDirectory();
-		const requiredFixture = packageFixture(
-			["npm:old@1.0.0"],
-			[],
-			[{ operation: "remove", identity: "npm:old", exactSource: "npm:old@1.0.0" }],
-		);
-		const bestEffortFixture = packageFixture(
-			["npm:old@1.0.0"],
-			[],
-			[{ operation: "remove", identity: "npm:old", exactSource: "npm:old@1.0.0", bestEffort: true }],
-		);
-		try {
-			const requiredAgent = join(requiredRoot.path, "agent");
-			await prepareExecution(requiredAgent, requiredFixture);
-			await assert.rejects(
-				execute({ agentDirectory: requiredAgent, fixture: requiredFixture, exec: createExec([], () => true) }),
-				/pi remove failed/,
-			);
-			assert.equal(await readFile(join(requiredAgent, "settings.json"), "utf8"), requiredFixture.currentSettingsText);
-
-			const bestEffortAgent = join(bestEffortRoot.path, "agent");
-			await prepareExecution(bestEffortAgent, bestEffortFixture);
-			const result = await execute({
-				agentDirectory: bestEffortAgent,
-				fixture: bestEffortFixture,
-				exec: createExec([], () => true),
-			});
-			assert.equal(result.status, "success");
-			assert.equal(result.bestEffortFailureIds.length, 1);
-			assert.equal(
-				await readFile(join(bestEffortAgent, "settings.json"), "utf8"),
-				bestEffortFixture.plannedSettingsText,
-			);
-			assert.equal((await loadJournal(bestEffortAgent))?.packageEvents?.at(-1)?.status, "best_effort_failed");
-		} finally {
-			await Promise.all([requiredRoot.cleanup(), bestEffortRoot.cleanup()]);
-		}
-	});
-
 	it("passes cancellation to the active Pi process and restores settings before reporting", async () => {
 		const temporary = await createTemporaryAgentDirectory();
 		const agentDirectory = join(temporary.path, "agent");
@@ -366,7 +313,6 @@ describe("package rollback", () => {
 			const agentDirectory = join(temporary.path, "agent");
 			const fixture = packageFixture(current, planned, specs);
 			const calls: PiCall[] = [];
-			const rememberApprovals = mock.fn(async () => {});
 			try {
 				await prepareExecution(agentDirectory, fixture);
 				await assert.rejects(
@@ -374,7 +320,6 @@ describe("package rollback", () => {
 						agentDirectory,
 						fixture,
 						exec: createExec(calls, (args) => args[1] === "npm:z@1.0.0"),
-						rememberApprovals,
 					}),
 					PackageExecutionError,
 				);
@@ -383,7 +328,6 @@ describe("package rollback", () => {
 					expected,
 				);
 				assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), fixture.currentSettingsText);
-				assert.equal(rememberApprovals.mock.callCount(), 0);
 			} finally {
 				await temporary.cleanup();
 			}

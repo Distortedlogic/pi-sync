@@ -207,38 +207,3 @@ export function resolveScopePlan(
 		policyChangeOnly: false,
 	});
 }
-
-export function approveScopeExpansion(
-	policy: LocalPolicy,
-	requestedScope: readonly string[],
-	approvedInPlanId: string,
-): LocalPolicy {
-	return {
-		...policy,
-		acceptedSharedScope: [...policy.acceptedSharedScope],
-		approvedScope: [...policy.approvedScope],
-		approvedSharedPackageSchemes: [...policy.approvedSharedPackageSchemes],
-		machineOnlyPackageSources: [...policy.machineOnlyPackageSources],
-		machineOnlySettings: [...policy.machineOnlySettings],
-		pendingScopeApproval: {
-			approvedInPlanId,
-			requestedScope: normalizeScope(requestedScope),
-		},
-	};
-}
-
-export function activateScopeApprovalForPlan(policy: LocalPolicy, planId: string): LocalPolicy {
-	const approval = policy.pendingScopeApproval;
-	if (!approval) return policy;
-	if (approval.approvedInPlanId === planId) {
-		throw new Error("A shared scope expansion can apply only to the next plan.");
-	}
-	return {
-		acceptedSharedScope: [...approval.requestedScope],
-		approvedScope: [...policy.approvedScope],
-		approvedSharedPackageSchemes: [...policy.approvedSharedPackageSchemes],
-		machineOnlyPackageSources: [...policy.machineOnlyPackageSources],
-		machineOnlySettings: [...policy.machineOnlySettings],
-		requirePinnedSharedPackages: policy.requirePinnedSharedPackages,
-	};
-}

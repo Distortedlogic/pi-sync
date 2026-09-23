@@ -21,7 +21,6 @@ export interface PackageExecutionSuccess {
 	status: "success";
 	planId: string;
 	actionIds: readonly string[];
-	bestEffortFailureIds: readonly string[];
 }
 
 export class PackageExecutionError extends Error {
@@ -76,9 +75,6 @@ function validatePackageAction(action: Readonly<ConfirmedPackageAction>): void {
 	) {
 		throw new PackageExecutionError(`Confirmed package update has no prior exact source: ${action.path}`);
 	}
-	if (action.bestEffort && action.packageOperation !== "remove") {
-		throw new PackageExecutionError(`Only confirmed package removal can be best effort: ${action.path}`);
-	}
 }
 
 function confirmedPackageActions(plan: Readonly<PlanArtifact>): readonly Readonly<ConfirmedPackageAction>[] {
@@ -111,8 +107,7 @@ function validateApprovals(
 		const id = packageActionDecisionId(action);
 		const decision = byId.get(id);
 		if (
-			!decision ||
-			(decision.choice !== "approve" && decision.choice !== "approve_and_remember") ||
+			decision?.choice !== "approve" ||
 			decision.exactSource !== action.exactPackageSource ||
 			decision.normalizedSource !== action.normalizedPackageSource ||
 			decision.previousExactSource !== action.previousExactPackageSource ||
@@ -315,13 +310,12 @@ export async function executeConfirmedPackagePlan(options: {
 	timeoutMs?: number;
 	operations?: MachineApplyOperations;
 	now?: () => string;
-	rememberApprovals?: (exactSources: readonly string[]) => Promise<void>;
 }): Promise<PackageExecutionSuccess> {
 	if (options.authorization.planId !== options.plan.planId) {
 		throw new PackageExecutionError("Execution authorization does not match the confirmed package plan.");
 	}
 	const actions = confirmedPackageActions(options.plan);
-	const approvals = validateApprovals(options.plan, actions);
+	validateApprovals(options.plan, actions);
 	const timeout = options.timeoutMs ?? DEFAULT_PACKAGE_TIMEOUT_MS;
 	if (!Number.isSafeInteger(timeout) || timeout < 1)
 		throw new PackageExecutionError("Package command timeout is invalid.");
@@ -338,10 +332,9 @@ export async function executeConfirmedPackagePlan(options: {
 			throw new PackageExecutionError("A recorded package action has an unknown final state.");
 		}
 	}
-	const allActionsRecorded = actions.every((action) => {
-		const status = latestStatus.get(packageActionDecisionId(action));
-		return status === "completed" || status === "best_effort_failed";
-	});
+	const allActionsRecorded = actions.every(
+		(action) => latestStatus.get(packageActionDecisionId(action)) === "completed",
+	);
 	validateExactSources({
 		plan: options.plan,
 		actions,
@@ -353,13 +346,10 @@ export async function executeConfirmedPackagePlan(options: {
 	const completed: Readonly<ConfirmedPackageAction>[] = actions.filter(
 		(action) => latestStatus.get(packageActionDecisionId(action)) === "completed",
 	);
-	const bestEffortFailureIds = actions
-		.filter((action) => latestStatus.get(packageActionDecisionId(action)) === "best_effort_failed")
-		.map(packageActionDecisionId);
 	try {
 		for (const action of actions) {
 			const previousStatus = latestStatus.get(packageActionDecisionId(action));
-			if (previousStatus === "completed" || previousStatus === "best_effort_failed") continue;
+			if (previousStatus === "completed") continue;
 			options.signal?.throwIfAborted();
 			journal = await appendJournalEvent({
 				agentDirectory: options.agentDirectory,
@@ -368,28 +358,13 @@ export async function executeConfirmedPackagePlan(options: {
 				status: "started",
 				now,
 			});
-			try {
-				await runPiPackageCommand({
-					exec: options.exec,
-					args: forwardArguments(action),
-					cwd: options.cwd,
-					timeout,
-					signal: options.signal,
-				});
-			} catch (error) {
-				if (action.packageOperation === "remove" && action.bestEffort && !options.signal?.aborted) {
-					journal = await appendJournalEvent({
-						agentDirectory: options.agentDirectory,
-						journal,
-						action,
-						status: "best_effort_failed",
-						now,
-					});
-					bestEffortFailureIds.push(packageActionDecisionId(action));
-					continue;
-				}
-				throw error;
-			}
+			await runPiPackageCommand({
+				exec: options.exec,
+				args: forwardArguments(action),
+				cwd: options.cwd,
+				timeout,
+				signal: options.signal,
+			});
 			completed.push(action);
 			journal = await appendJournalEvent({
 				agentDirectory: options.agentDirectory,
@@ -411,10 +386,6 @@ export async function executeConfirmedPackagePlan(options: {
 		if (packageSetFingerprint(parsedWrittenSettings.packages) !== options.plan.packageFingerprint) {
 			throw new PackageExecutionError("Installed package declarations do not match settings.json.");
 		}
-		const rememberedSources = approvals
-			.filter((decision) => decision.choice === "approve_and_remember")
-			.map((decision) => decision.exactSource as string);
-		if (rememberedSources.length > 0) await options.rememberApprovals?.(Object.freeze(rememberedSources));
 	} catch (error) {
 		const rollbackErrors: PackageRollbackError[] = [];
 		for (const action of [...completed].reverse()) {
@@ -469,6 +440,5 @@ export async function executeConfirmedPackagePlan(options: {
 		status: "success",
 		planId: options.plan.planId,
 		actionIds: Object.freeze(actions.map(packageActionDecisionId)),
-		bestEffortFailureIds: Object.freeze(bestEffortFailureIds),
 	};
 }

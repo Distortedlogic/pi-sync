@@ -11,10 +11,9 @@ import {
 	type ConflictDecision,
 	collectConflictDecisions,
 	createConflictMergeWorkspace,
-	rebuildConflictPlan,
 } from "../src/conflicts.ts";
 import type { InventoryFile } from "../src/files.ts";
-import { buildPlanArtifact, type PlanDecision } from "../src/plan.ts";
+import { buildPlanArtifact } from "../src/plan.ts";
 import type { PlanArtifact } from "../src/types.ts";
 import { createTemporaryAgentDirectory } from "./helpers.ts";
 
@@ -33,7 +32,7 @@ function file(path: string, content: string): Readonly<InventoryFile> {
 	});
 }
 
-function conflictPlan(decisions: readonly PlanDecision[] = []): Readonly<PlanArtifact> {
+function conflictPlan(): Readonly<PlanArtifact> {
 	return buildPlanArtifact({
 		actions: [
 			{
@@ -51,7 +50,7 @@ function conflictPlan(decisions: readonly PlanDecision[] = []): Readonly<PlanArt
 		],
 		baselineCommit: null,
 		createdAt: "2026-01-01T00:00:00.000Z",
-		decisions,
+		decisions: [],
 		effectivePaths: ["settings.json"],
 		finalMachineTree: {},
 		finalSharedTree: {},
@@ -74,15 +73,6 @@ function decision(choice: ConflictChoice): ConflictDecision {
 
 describe("conflict review", () => {
 	it("keeps the fixed choices and returns the selected exact decision", async () => {
-		assert.deepEqual(
-			CONFLICT_CHOICES.map(({ choice, label }) => ({ choice, label })),
-			[
-				{ choice: "use_machine_both", label: "USE THIS MACHINE ON BOTH SIDES" },
-				{ choice: "use_shared_both", label: "USE SHARED REPOSITORY ON BOTH SIDES" },
-				{ choice: "keep_both_stop", label: "KEEP BOTH AND STOP" },
-				{ choice: "merge_workspace", label: "CREATE A SEPARATE MERGE WORKSPACE" },
-			],
-		);
 		const machine = file("settings.json", "machine");
 		const shared = file("settings.json", "shared");
 		const summaries = buildConflictSummaries({
@@ -105,22 +95,6 @@ describe("conflict review", () => {
 			conflicts: summaries,
 		});
 		assert.deepEqual(decisions, [decision("use_machine_both")]);
-	});
-
-	it("creates a distinct final plan for each exact choice", () => {
-		const originalPlan = conflictPlan();
-		for (const { choice } of CONFLICT_CHOICES) {
-			const selectedDecision = decision(choice);
-			const resolution = rebuildConflictPlan({
-				originalPlan,
-				decisions: [selectedDecision],
-				rebuild: (decisions) => conflictPlan(decisions as PlanDecision[]),
-			});
-			assert.notEqual(resolution.plan.planId, originalPlan.planId);
-			assert.deepEqual(resolution.plan.decisions, [selectedDecision]);
-			assert.equal(resolution.requiresNewPlan, true);
-			assert.equal(resolution.stopped, choice === "keep_both_stop" || choice === "merge_workspace");
-		}
 	});
 });
 

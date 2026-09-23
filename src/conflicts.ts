@@ -27,13 +27,6 @@ export interface ConflictDecision {
 	choice: ConflictChoice;
 }
 
-export interface ConflictResolution {
-	plan: Readonly<PlanArtifact>;
-	decisions: readonly Readonly<ConflictDecision>[];
-	requiresNewPlan: true;
-	stopped: boolean;
-}
-
 function sideSummary(side: "THIS MACHINE" | "SHARED REPOSITORY", file: Readonly<InventoryFile> | undefined): string {
 	if (!file) return `${side}: no file at this path.`;
 	return `${side}: ${file.size ?? "unknown"} bytes, SHA-256 ${file.sha256}, executable ${file.executable ? "yes" : "no"}.`;
@@ -73,43 +66,6 @@ export async function collectConflictDecisions(options: {
 		decisions.push(Object.freeze({ category: "conflict", id: `conflict:${conflict.path}`, choice }));
 	}
 	return Object.freeze(decisions);
-}
-
-export function rebuildConflictPlan(options: {
-	originalPlan: Readonly<PlanArtifact>;
-	decisions: readonly Readonly<ConflictDecision>[];
-	rebuild(decisions: readonly Readonly<ConflictDecision>[]): Readonly<PlanArtifact>;
-}): Readonly<ConflictResolution> {
-	const conflictPaths = options.originalPlan.actions
-		.filter((action) => action.risk === "conflict")
-		.map((action) => action.path)
-		.sort();
-	const decisionPaths = options.decisions.map((decision) => decision.id.replace(/^conflict:/, "")).sort();
-	if (new Set(decisionPaths).size !== decisionPaths.length || decisionPaths.join("\0") !== conflictPaths.join("\0")) {
-		throw new Error("Every conflict needs one exact choice before plan rebuilding.");
-	}
-	const rebuilt = options.rebuild(options.decisions);
-	if (rebuilt.planId === options.originalPlan.planId) {
-		throw new Error("Every conflict choice requires a new final plan.");
-	}
-	for (const decision of options.decisions) {
-		if (
-			!rebuilt.decisions.some(
-				(candidate) =>
-					candidate.category === "conflict" && candidate.id === decision.id && candidate.choice === decision.choice,
-			)
-		) {
-			throw new Error(`The new final plan does not contain the conflict choice for ${decision.id}.`);
-		}
-	}
-	return Object.freeze({
-		plan: rebuilt,
-		decisions: Object.freeze([...options.decisions]),
-		requiresNewPlan: true,
-		stopped: options.decisions.some(
-			(decision) => decision.choice === "keep_both_stop" || decision.choice === "merge_workspace",
-		),
-	});
 }
 
 async function writeConflictCopy(root: string, path: string, file: Readonly<InventoryFile> | undefined): Promise<void> {

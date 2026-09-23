@@ -1,10 +1,10 @@
 import { hash } from "node:crypto";
-import type { Dirent, Stats } from "node:fs";
-import { chmod, lstat, mkdir, readdir, readFile, rm, unlink } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { chmod, lstat, mkdir, readFile, unlink } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import stableStringify from "json-stable-stringify";
 import writeFileAtomic from "write-file-atomic";
-import { ensureConfigSyncDirectories, getConfigSyncPaths } from "./config.ts";
+import { ensureConfigSyncDirectories } from "./config.ts";
 import {
 	type InventoryFile,
 	portableExecutableBit,
@@ -34,8 +34,6 @@ export interface MachineApplyOperations {
 	writeAtomic(path: string, content: Uint8Array, mode: number): Promise<void>;
 	unlink(path: string): Promise<void>;
 	chmod(path: string, mode: number): Promise<void>;
-	readdir(path: string): Promise<Dirent[]>;
-	rm(path: string): Promise<void>;
 	syncDirectory(path: string): Promise<void>;
 }
 
@@ -44,12 +42,6 @@ export interface MachineApplySuccess {
 	planId: string;
 	backupId: string;
 	appliedPaths: readonly string[];
-}
-
-export interface BackupCleanupResult {
-	keptBackupIds: readonly string[];
-	deletedBackupIds: readonly string[];
-	failedBackupIds: readonly string[];
 }
 
 export interface MachineRestoreSuccess {
@@ -186,8 +178,6 @@ export function createMachineApplyOperations(): MachineApplyOperations {
 		},
 		unlink,
 		chmod,
-		readdir: (path) => readdir(path, { withFileTypes: true }),
-		rm: (path) => rm(path, { force: true, recursive: true }),
 		syncDirectory,
 	};
 }
@@ -560,41 +550,4 @@ export async function applyMachinePlan(options: {
 }): Promise<MachineApplySuccess> {
 	await createVerifiedMachineBackup(options);
 	return applyMachineFilesFromBackup({ ...options, verifyFinal: true });
-}
-
-export async function cleanupMachineBackups(options: {
-	agentDirectory: string;
-	retain: number;
-	operations?: MachineApplyOperations;
-}): Promise<BackupCleanupResult> {
-	const operations = options.operations ?? createMachineApplyOperations();
-	const paths = getConfigSyncPaths(options.agentDirectory);
-	const entries = await operations.readdir(paths.backupsDirectory);
-	const valid: BackupMetadata[] = [];
-	const failedBackupIds: string[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		try {
-			valid.push(await verifyBackup({ agentDirectory: options.agentDirectory, backupId: entry.name, operations }));
-		} catch {
-			failedBackupIds.push(entry.name);
-		}
-	}
-	valid.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-	const keepCount = Math.max(1, options.retain);
-	const keptBackupIds = valid.slice(0, keepCount).map((backup) => backup.backupId);
-	const deletedBackupIds: string[] = [];
-	for (const backup of valid.slice(keepCount)) {
-		try {
-			await operations.rm(backupRoot(options.agentDirectory, backup.backupId));
-			deletedBackupIds.push(backup.backupId);
-		} catch {
-			failedBackupIds.push(backup.backupId);
-		}
-	}
-	return {
-		keptBackupIds: Object.freeze(keptBackupIds),
-		deletedBackupIds: Object.freeze(deletedBackupIds),
-		failedBackupIds: Object.freeze(failedBackupIds.sort()),
-	};
 }
