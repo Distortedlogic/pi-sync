@@ -2,6 +2,7 @@
 	"compilerOptions": {
 		"allowImportingTsExtensions": true,
 		"erasableSyntaxOnly": true,
+		"isolatedModules": true,
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"noEmit": true,
@@ -11,5 +12,5 @@
 		"types": ["node"],
 		"verbatimModuleSyntax": true
 	},
-	"include": [".forgejo/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
+	"include": ["src/**/*.ts", "test/**/*.ts"]
 }

@@ -1,17 +1,21 @@
 {
 	"name": "pi-sync",
 	"version": "0.1.0",
-	"description": "Synchronize Pi configuration between THIS MACHINE and a SHARED REPOSITORY.",
 	"type": "module",
 	"keywords": [
 		"pi-package"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Distortedlogic/pi-sync.git"
+	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"scripts": {
 		"check": "npm run typecheck && npm run lint && npm test",
+		"format": "biome check --write .",
 		"lint": "biome check .",
 		"pack:check": "npm pack --dry-run",
 		"prepublishOnly": "npm run release:check",
@@ -50,23 +54,21 @@
 		"access": "public"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "0.87.0",
-		"@earendil-works/pi-tui": "0.87.0",
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
 		"typebox": "*"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.14",
-		"@earendil-works/pi-ai": "0.87.0",
-		"@earendil-works/pi-coding-agent": "0.87.0",
-		"@earendil-works/pi-tui": "0.87.0",
-		"@types/node": "22.19.19",
+		"@biomejs/biome": "2.5.14",
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
+		"@types/node": "22.20.4",
 		"@types/npm-package-arg": "6.1.4",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
 		"@types/write-file-atomic": "4.0.3",
 		"tsx": "4.23.15",
-		"typebox": "1.3.7",
-		"typescript": "7.0.2",
-		"yaml": "2.9.1"
+		"typebox": "1.3.34",
+		"typescript": "7.0.2"
 	}
 }

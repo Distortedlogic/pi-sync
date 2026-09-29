@@ -8,16 +8,7 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"preset": "recommended",
-			"performance": {
-				"noDelete": "off"
-			},
-			"style": {
-				"noNonNullAssertion": "off"
-			},
-			"suspicious": {
-				"noExplicitAny": "off"
-			}
+			"preset": "recommended"
 		}
 	},
 	"javascript": {
