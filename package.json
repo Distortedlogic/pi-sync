@@ -54,14 +54,16 @@
 		"access": "public"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "0.87.1",
-		"@earendil-works/pi-tui": "0.87.1",
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.14",
-		"@earendil-works/pi-coding-agent": "0.87.1",
-		"@earendil-works/pi-tui": "0.87.1",
+		"@earendil-works/pi-ai": "0.99.2",
+		"@earendil-works/pi-coding-agent": "0.99.2",
+		"@earendil-works/pi-tui": "0.99.2",
 		"@types/node": "22.20.4",
 		"@types/npm-package-arg": "6.1.4",
 		"@types/proper-lockfile": "4.1.4",
